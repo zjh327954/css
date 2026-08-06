@@ -9,23 +9,8 @@ import ipaddress
 import random
 import socket
 import multiprocessing
-import warnings
 from concurrent.futures import ProcessPoolExecutor
 from functools import lru_cache
-from urllib.parse import urlparse
-
-# 忽略 cryptography 证书序列号非标准（RFC 5280）引起的 Deprecation 警告
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", message=".*Parsed a serial number which wasn't positive.*")
-
-# 引入 cryptography 库进行严谨的 DER 证书解析
-try:
-    from cryptography import x509
-    from cryptography.x509.oid import NameOID, ExtensionOID
-    CRYPTOGRAPHY_AVAILABLE = True
-except ImportError:
-    CRYPTOGRAPHY_AVAILABLE = False
-    print("[!] 警告: 未检测到 cryptography 库(pip install cryptography)，将使用回退匹配模式", flush=True)
 
 # ==================== 0. 自动优化文件句柄限制 ====================
 def optimize_system_limits():
@@ -41,7 +26,6 @@ def optimize_system_limits():
 
 optimize_system_limits()
 
-# 启用 uvloop 提升 Event Loop 性能
 try:
     import uvloop
     uvloop.install()
@@ -52,10 +36,9 @@ except ImportError:
 # ==================== 配置区域 ====================
 DEFAULT_TARGETS = os.getenv("TARGET_LIST", os.getenv("ASN_LIST", "AS36002"))
 DEFAULT_PORTS = "443, 8443, 2053, 2083, 2096"
-CUSTOM_CF_DOMAIN = os.getenv("CUSTOM_CF_DOMAIN", "")
+CUSTOM_CF_DOMAIN = os.getenv("CUSTOM_CF_DOMAIN", "327954.ccwu.cc")
 
 CF_SNI_1 = "www.cloudflare.com"
-# 优先读取 GitHub Actions 工作流传入的并发速率，若无则默认 1500
 STAGE1_CONCURRENCY = int(os.getenv("STAGE1_CONCURRENCY", "1500"))
 STAGE1_TIMEOUT = 2
 
@@ -65,9 +48,8 @@ STAGE3_TIMEOUT = 1.2
 
 CPU_CORES = max(1, os.cpu_count() or 1)
 
-# 已知 Cloudflare 官方重定向目标域名列表
-CF_OFFICIAL_DOMAINS = {"cloudflare.com", "cloudflare.net", "cloudflareclient.com", "cf-ip.com"}
-
+# 注意：为了能用 ssl_obj.getpeercert() 拿到解析好的 SAN 字典，
+# 将 check_hostname 设置为 False，verify_mode 设置为 CERT_NONE
 SSL_CTX = ssl.create_default_context()
 SSL_CTX.check_hostname = False
 SSL_CTX.verify_mode = ssl.CERT_NONE
@@ -176,52 +158,24 @@ async def parse_targets_async(input_str):
     return unique_ips
 
 
-def rfc_match_domain(sni_domain, cert_pattern):
-    """严格遵循 RFC 6125 通配符规则逐域名匹配"""
-    sni = sni_domain.lower().strip('.')
-    pattern = cert_pattern.lower().strip('.')
-
-    if sni == pattern:
-        return True
-
-    if pattern.startswith("*."):
-        suffix = pattern[2:]
-        sni_parts = sni.split(".")
-        suffix_parts = suffix.split(".")
-        
-        if len(sni_parts) == len(suffix_parts) + 1:
-            if ".".join(sni_parts[1:]) == suffix:
+def match_domain_in_san(sni_domain, san_list):
+    """【优化1】通过 SAN 扩展列表精准匹配域名与泛域名"""
+    sni_domain = sni_domain.lower()
+    for domain in san_list:
+        domain = domain.lower()
+        if domain == sni_domain:
+            return True
+        if domain.startswith("*."):
+            parent_domain = domain[2:]
+            if sni_domain.endswith("." + parent_domain) or sni_domain == parent_domain:
                 return True
-
+        if "cloudflare" in sni_domain and "cloudflare" in domain:
+            return True
     return False
 
 
-def extract_domains_from_der(der_bytes):
-    """使用 cryptography 库精确解析 DER 提取 CN 和 SAN 列表，加入异常容错"""
-    domains = []
-    try:
-        cert = x509.load_der_x509_certificate(der_bytes)
-        
-        cn_attrs = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
-        for attr in cn_attrs:
-            if isinstance(attr.value, str):
-                domains.append(attr.value)
-                
-        try:
-            san_ext = cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
-            san_domains = san_ext.value.get_values_for_type(x509.DNSName)
-            domains.extend(san_domains)
-        except x509.ExtensionNotFound:
-            pass
-            
-    except Exception:
-        pass
-
-    return list(set(domains))
-
-
 async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
-    """阶段一/阶段三：解析 DER 证书提取 CN/SAN 并执行 RFC 比对"""
+    """阶段一/阶段三：优化获取 SAN 并精准匹配"""
     async with sem:
         writer = None
         try:
@@ -236,22 +190,22 @@ async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
             if not ssl_obj:
                 return False
 
-            der_cert = ssl_obj.getpeercert(binary_form=True)
-            if not der_cert:
-                return False
+            # 使用正规 API 获取解析后的证书字典
+            cert = ssl_obj.getpeercert()
+            
+            san_domains = []
+            if cert and 'subjectAltName' in cert:
+                for type_, name in cert['subjectAltName']:
+                    if type_ == 'DNS':
+                        san_domains.append(name)
 
-            if CRYPTOGRAPHY_AVAILABLE:
-                try:
-                    cert_domains = extract_domains_from_der(der_cert)
-                    for pattern in cert_domains:
-                        if rfc_match_domain(sni, pattern):
-                            return True
-                    return False
-                except Exception:
-                    # 极端异常下触发降级匹配
-                    cert_str = der_cert.decode('latin1', errors='ignore').lower()
-                    return sni.lower() in cert_str or "cloudflare" in cert_str
+            # 优先精准 SAN 匹配，若解析受限则兜底校验 DER 原生字段
+            if san_domains:
+                return match_domain_in_san(sni, san_domains)
             else:
+                der_cert = ssl_obj.getpeercert(binary_form=True)
+                if not der_cert:
+                    return False
                 cert_str = der_cert.decode('latin1', errors='ignore').lower()
                 return sni.lower() in cert_str or "cloudflare" in cert_str
 
@@ -267,7 +221,7 @@ async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
 
 
 async def check_http_async(ip, port, host, timeout_val, sem):
-    """解析 Location 头部，校验重定向目标域名是否为已知 CF 域名"""
+    """【优化2】阶段二：增加 Server: cloudflare / cf-ray 响应头校验"""
     async with sem:
         writer = None
         try:
@@ -286,30 +240,13 @@ async def check_http_async(ip, port, host, timeout_val, sem):
             if not data:
                 return False
 
-            resp_str = data.decode('latin1', errors='ignore')
-            lines = resp_str.split("\r\n")
-
-            status_line = lines[0].lower() if lines else ""
-            if not ("301" in status_line or "302" in status_line):
-                return False
-
-            location_val = None
-            for line in lines[1:]:
-                if line.lower().startswith("location:"):
-                    location_val = line.split(":", 1)[1].strip()
-                    break
-
-            if not location_val:
-                return False
-
-            parsed_url = urlparse(location_val if "://" in location_val else f"https://{location_val}")
-            target_host = (parsed_url.netloc or parsed_url.path).split(":")[0].lower()
-
-            for cf_domain in CF_OFFICIAL_DOMAINS:
-                if target_host == cf_domain or target_host.endswith("." + cf_domain):
-                    return True
-
-            return False
+            resp_str = data.decode('latin1', errors='ignore').lower()
+            
+            # 必须同时具备重定向特征 (301/302) 与 CF 专属响应头
+            is_redirect = ("http/1.1 301" in resp_str or "http/1.1 302" in resp_str) and ("location:" in resp_str)
+            is_cf_header = ("server: cloudflare" in resp_str or "cf-ray:" in resp_str)
+            
+            return is_redirect and is_cf_header
         except Exception:
             return False
         finally:
@@ -332,10 +269,6 @@ def _init_process_worker(counter, pass_counter, lock, total, printed_array):
 
 
 def _process_worker_stage1(targets_chunk):
-    # 忽略子进程中的 Warning 提示
-    warnings.filterwarnings("ignore", category=DeprecationWarning)
-    warnings.filterwarnings("ignore", message=".*Parsed a serial number which wasn't positive.*")
-
     if UVLOOP_ENABLED:
         uvloop.install()
         
@@ -370,12 +303,12 @@ def _process_worker_stage1(targets_chunk):
 
 
 async def main():
-    target_input = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1].strip() else DEFAULT_TARGETS
-    ports_input = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2].strip() else DEFAULT_PORTS
+    target_input = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_TARGETS
+    ports_input = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_PORTS
 
     target_ports = parse_ports(ports_input)
     
-    print(f"\n[*] 正在解析目标地址/ASN: {target_input}...", flush=True)
+    print(f"\n[*] 正在解析目标地址/ASN...", flush=True)
     all_ips = await parse_targets_async(target_input)
 
     if not all_ips:
@@ -420,7 +353,7 @@ async def main():
         print("[-] 无有效 IP:端口 通过第一阶段。", flush=True)
         return
 
-    # ==================== 2. HTTP 严格 301/302 + Location 校验 ====================
+    # ==================== 2. HTTP 严格 301/302 + Response Header 校验 ====================
     sem = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
     print(f"[2/3 第二阶段 HTTP 校验] 正在快速校验 {len(pass_1)} 个候选目标...", flush=True)
     tasks2 = [check_http_async(ip, port, CF_HOST_TEST, STAGE2_TIMEOUT, sem) for ip, port in pass_1]
