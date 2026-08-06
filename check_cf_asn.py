@@ -335,7 +335,7 @@ async def main():
 
     target_ports = parse_ports(ports_input)
     
-    print(f"\n[*] 正在解析目标地址/ASN...", flush=True)
+    print(f"\n[*] 正在解析目标地址/ASN: {target_input} ...", flush=True)
     all_ips = await parse_targets_async(target_input)
 
     if not all_ips:
