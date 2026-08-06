@@ -14,9 +14,11 @@ from concurrent.futures import ProcessPoolExecutor
 from functools import lru_cache
 from urllib.parse import urlparse
 
-# 忽略 cryptography 证书序列号非标准（RFC 5280）引起的 Deprecation 警告
+# 忽略 cryptography 证书序列号及属性长度等非标准引起的所有 Warning 警告
+warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", message=".*Parsed a serial number which wasn't positive.*")
+warnings.filterwarnings("ignore", message=".*Attribute's length must be.*")
 
 # 引入 cryptography 库进行严谨的 DER 证书解析
 try:
@@ -333,8 +335,10 @@ def _init_process_worker(counter, pass_counter, lock, total, printed_array):
 
 def _process_worker_stage1(targets_chunk):
     # 忽略子进程中的 Warning 提示
+    warnings.filterwarnings("ignore", category=UserWarning)
     warnings.filterwarnings("ignore", category=DeprecationWarning)
     warnings.filterwarnings("ignore", message=".*Parsed a serial number which wasn't positive.*")
+    warnings.filterwarnings("ignore", message=".*Attribute's length must be.*")
 
     if UVLOOP_ENABLED:
         uvloop.install()
