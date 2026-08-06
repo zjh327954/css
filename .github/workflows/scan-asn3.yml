@@ -16,6 +16,11 @@ on:
         required: true
         default: '100'
 
+# 增加并发控制，当多个工作流同时推送到 main 分支时自动排队
+concurrency:
+  group: git-push-main
+  cancel-in-progress: false
+
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -26,6 +31,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取完整历史以保障 rebase 顺利进行
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -51,4 +58,15 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add *.txt
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update scanned ASN txt files [skip ci]" && git push)
+
+          if ! git diff --staged --quiet; then
+            git commit -m "Update scanned ASN txt files [skip ci]"
+            for i in {1..5}; do
+              echo "尝试推送到远程仓库 (第 $i 次)..."
+              git pull --rebase origin main && git push origin main && break
+              echo "推送发生冲突，等待 2 秒后重试..."
+              sleep 2
+            done
+          else
+            echo "没有任何 txt 结果变更，跳过提交。"
+          fi
