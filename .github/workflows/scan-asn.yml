@@ -1,4 +1,4 @@
-name: CF ASN IP Scanner
+name: '标准'
 
 on:
   workflow_dispatch:
