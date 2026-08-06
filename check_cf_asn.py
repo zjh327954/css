@@ -12,20 +12,43 @@ import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from functools import lru_cache
 
-# ==================== 0. 自动优化文件句柄限制 ====================
+# ==================== 0. 自动优化系统内核与文件句柄限制 ====================
 def optimize_system_limits():
-    """自动化调优系统文件句柄限制 (ulimit)"""
+    """自动化调优系统文件句柄限制 (ulimit) 与内核网络参数 (sysctl)"""
+    print("[*] 正在尝试优化系统内核与文件描述符限制...", flush=True)
+
+    # 1. 自动提升文件句柄限制 (ulimit -n)
     try:
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         target_limit = max(65535, hard)
         resource.setrlimit(resource.RLIMIT_NOFILE, (target_limit, target_limit))
-        new_soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+        new_soft, new_hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         print(f"[+] 文件描述符上限 (ulimit) 调整成功: {new_soft}", flush=True)
     except Exception as e:
-        print(f"[-] 调整 ulimit 失败: {e}", flush=True)
+        print(f"[-] 调整 ulimit 失败 (可能无权限): {e}", flush=True)
 
+    # 2. 修改内核网络参数 (需要 Root 权限)
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        sysctl_settings = {
+            "/proc/sys/net/core/somaxconn": "65535",
+            "/proc/sys/net/ipv4/tcp_tw_reuse": "1",
+            "/proc/sys/net/ipv4/ip_local_port_range": "1024 65535",
+        }
+
+        for path, value in sysctl_settings.items():
+            try:
+                with open(path, "w") as f:
+                    f.write(value)
+                print(f"[+] 内核参数已优化: {path} -> {value}", flush=True)
+            except Exception as e:
+                print(f"[-] 设置 {path} 失败: {e}", flush=True)
+    else:
+        print("[!] 提示: 当前非 Root 用户，跳过 sysctl 内核参数优化（若在 GitHub Actions 中默认是 Root）", flush=True)
+
+# 启动第一时间执行系统调优
 optimize_system_limits()
 
+# 尝试加载 uvloop 替代 Python 原生 asyncio 循环 (IO 性能提升 2~4 倍)
 try:
     import uvloop
     uvloop.install()
@@ -33,36 +56,43 @@ try:
 except ImportError:
     UVLOOP_ENABLED = False
 
-# ==================== 配置区域 ====================
+# ==================== 极限性能配置区域 ====================
 DEFAULT_TARGETS = os.getenv("TARGET_LIST", os.getenv("ASN_LIST", "AS36002"))
 DEFAULT_PORTS = "443, 8443, 2053, 2083, 2096"
 CUSTOM_CF_DOMAIN = os.getenv("CUSTOM_CF_DOMAIN", "327954.ccwu.cc")
 
+# 阶段 1：TLS 粗筛 (www.cloudflare.com)
 CF_SNI_1 = "www.cloudflare.com"
-STAGE1_CONCURRENCY = int(os.getenv("STAGE1_CONCURRENCY", "1500"))
-STAGE1_TIMEOUT = 2
+STAGE1_CONCURRENCY = int(os.getenv("STAGE1_CONCURRENCY", "1500"))   # 单进程并发数
+STAGE1_TIMEOUT = 2        # 超时收紧至 0.8s
 
+# 阶段 2：HTTP 验证 Host (crypto.cloudflare.com)
 CF_HOST_TEST = "crypto.cloudflare.com"
 STAGE2_TIMEOUT = 1.2
+
+# 阶段 3：自定义域名校验超时
 STAGE3_TIMEOUT = 1.2
 
+# CPU 核心数 (决定多进程并行数量)
 CPU_CORES = max(1, os.cpu_count() or 1)
 
-# 注意：为了能用 ssl_obj.getpeercert() 拿到解析好的 SAN 字典，
-# 将 check_hostname 设置为 False，verify_mode 设置为 CERT_NONE
+# 优化 SSL Context 避免不必要的握手开销
 SSL_CTX = ssl.create_default_context()
 SSL_CTX.check_hostname = False
 SSL_CTX.verify_mode = ssl.CERT_NONE
 SSL_CTX.options |= ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3
 
+# 全局共享变量定义 (多进程进度与通过数同步)
 global_counter = None
 global_pass_counter = None
 global_lock = None
 global_total = 0
 global_step = 0
 global_printed_milestones = None
+# =========================================================
 
 def parse_ports(port_str):
+    """支持 443,8443 或 1-65535 范围解析"""
     if not port_str:
         return [443, 8443, 2053, 2083, 2096]
     
@@ -88,9 +118,11 @@ def parse_ports(port_str):
 
 @lru_cache(maxsize=32)
 def get_ips_from_asn_sync(asn_clean):
+    """同步阻塞获取 ASN 的 IP 段 (带 lru_cache 避免重复查询)"""
     import urllib.request
     cidrs = []
     
+    # 源 1: RIPE
     try:
         ripe_url = f"https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{asn_clean}"
         req = urllib.request.Request(ripe_url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -104,6 +136,7 @@ def get_ips_from_asn_sync(asn_clean):
     except Exception:
         pass
 
+    # 源 2: BGPView 兜底
     if not cidrs:
         try:
             bgp_url = f"https://api.bgpview.io/asn/{asn_clean}/prefixes"
@@ -133,6 +166,7 @@ def get_ips_from_asn_sync(asn_clean):
 
 
 async def parse_targets_async(input_str):
+    """在 asyncio 执行器中运行同步网络请求，避免阻塞 EventLoop"""
     loop = asyncio.get_running_loop()
     raw_targets = [t.strip() for t in re.split(r'[\s,]+', input_str) if t.strip()]
     all_ips = []
@@ -158,24 +192,28 @@ async def parse_targets_async(input_str):
     return unique_ips
 
 
-def match_domain_in_san(sni_domain, san_list):
-    """【优化1】通过 SAN 扩展列表精准匹配域名与泛域名"""
+def match_domain_in_cert(sni_domain, cert_str):
     sni_domain = sni_domain.lower()
-    for domain in san_list:
-        domain = domain.lower()
-        if domain == sni_domain:
+    cert_str = cert_str.lower()
+    
+    if sni_domain in cert_str:
+        return True
+        
+    parts = sni_domain.split(".")
+    if len(parts) >= 2:
+        main_domain = ".".join(parts[-2:])
+        wildcard_domain = f"*.{main_domain}"
+        if main_domain in cert_str or wildcard_domain in cert_str:
             return True
-        if domain.startswith("*."):
-            parent_domain = domain[2:]
-            if sni_domain.endswith("." + parent_domain) or sni_domain == parent_domain:
-                return True
-        if "cloudflare" in sni_domain and "cloudflare" in domain:
-            return True
+            
+    if "cloudflare" in sni_domain and "cloudflare" in cert_str:
+        return True
+
     return False
 
 
 async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
-    """阶段一/阶段三：优化获取 SAN 并精准匹配"""
+    """阶段一/阶段三：异步 TLS 握手优化"""
     async with sem:
         writer = None
         try:
@@ -190,25 +228,12 @@ async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
             if not ssl_obj:
                 return False
 
-            # 使用正规 API 获取解析后的证书字典
-            cert = ssl_obj.getpeercert()
+            der_cert = ssl_obj.getpeercert(binary_form=True)
+            if not der_cert:
+                return False
             
-            san_domains = []
-            if cert and 'subjectAltName' in cert:
-                for type_, name in cert['subjectAltName']:
-                    if type_ == 'DNS':
-                        san_domains.append(name)
-
-            # 优先精准 SAN 匹配，若解析受限则兜底校验 DER 原生字段
-            if san_domains:
-                return match_domain_in_san(sni, san_domains)
-            else:
-                der_cert = ssl_obj.getpeercert(binary_form=True)
-                if not der_cert:
-                    return False
-                cert_str = der_cert.decode('latin1', errors='ignore').lower()
-                return sni.lower() in cert_str or "cloudflare" in cert_str
-
+            cert_str = der_cert.decode('latin1', errors='ignore').lower()
+            return match_domain_in_cert(sni, cert_str)
         except Exception:
             return False
         finally:
@@ -221,7 +246,7 @@ async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
 
 
 async def check_http_async(ip, port, host, timeout_val, sem):
-    """【优化2】阶段二：增加 Server: cloudflare / cf-ray 响应头校验"""
+    """阶段二：校验 HTTP 301/302 重定向"""
     async with sem:
         writer = None
         try:
@@ -236,17 +261,13 @@ async def check_http_async(ip, port, host, timeout_val, sem):
             writer.write(req.encode('latin1'))
             await writer.drain()
 
-            data = await asyncio.wait_for(reader.read(1024), timeout=timeout_val)
+            data = await asyncio.wait_for(reader.read(512), timeout=timeout_val)
+
             if not data:
                 return False
 
             resp_str = data.decode('latin1', errors='ignore').lower()
-            
-            # 必须同时具备重定向特征 (301/302) 与 CF 专属响应头
-            is_redirect = ("http/1.1 301" in resp_str or "http/1.1 302" in resp_str) and ("location:" in resp_str)
-            is_cf_header = ("server: cloudflare" in resp_str or "cf-ray:" in resp_str)
-            
-            return is_redirect and is_cf_header
+            return ("http/1.1 301" in resp_str or "http/1.1 302" in resp_str) and ("location:" in resp_str)
         except Exception:
             return False
         finally:
@@ -258,17 +279,20 @@ async def check_http_async(ip, port, host, timeout_val, sem):
                     pass
 
 
+# ==================== 多进程共享变量初始化 ====================
 def _init_process_worker(counter, pass_counter, lock, total, printed_array):
+    """初始化子进程的全局锁与共享内存计数器"""
     global global_counter, global_pass_counter, global_lock, global_total, global_step, global_printed_milestones
     global_counter = counter
     global_pass_counter = pass_counter
     global_lock = lock
     global_total = total
-    global_step = max(1, total // 10)
+    global_step = max(1, total // 10)  # 全局总量的 10% 步长
     global_printed_milestones = printed_array
 
 
 def _process_worker_stage1(targets_chunk):
+    """子进程内部运行独立的 uvloop/asyncio 事件循环，同步全局 10% 进度及通过数"""
     if UVLOOP_ENABLED:
         uvloop.install()
         
@@ -278,6 +302,7 @@ def _process_worker_stage1(targets_chunk):
         async def worker(ip, port):
             res = await check_tls_sni_async(ip, port, CF_SNI_1, STAGE1_TIMEOUT, sem)
             
+            # 使用原子锁更新全局共享计数器
             with global_lock:
                 global_counter.value += 1
                 if res:
@@ -286,8 +311,10 @@ def _process_worker_stage1(targets_chunk):
                 curr = global_counter.value
                 passed = global_pass_counter.value
                 
+                # 计算当前处于全局第几个 10% 节点
                 milestone_idx = curr // global_step
                 if 1 <= milestone_idx <= 10:
+                    # 确保每个 10% 阶段全局只会被一个进程打印一次
                     if global_printed_milestones[milestone_idx - 1] == 0:
                         global_printed_milestones[milestone_idx - 1] = 1
                         pct = min(100, milestone_idx * 10)
@@ -328,15 +355,17 @@ async def main():
     chunk_size = max(1, total_targets_count // num_chunks)
     chunks = [targets[i:i + chunk_size] for i in range(0, total_targets_count, chunk_size)]
 
+    # 创建跨进程共享内存对象
     manager = multiprocessing.Manager()
-    counter = manager.Value('i', 0)
-    pass_counter = manager.Value('i', 0)
+    counter = manager.Value('i', 0)        # 已测试总数
+    pass_counter = manager.Value('i', 0)   # 匹配通过总数
     lock = manager.Lock()
-    printed_array = manager.Array('i', [0] * 10)
+    printed_array = manager.Array('i', [0] * 10) # 记录 10% ~ 100% 打印标记位
 
     pass_1 = []
     loop = asyncio.get_running_loop()
     
+    # 传入 initializer 将共享锁与共享变量注入各个子进程
     with ProcessPoolExecutor(
         max_workers=CPU_CORES,
         initializer=_init_process_worker,
@@ -353,7 +382,7 @@ async def main():
         print("[-] 无有效 IP:端口 通过第一阶段。", flush=True)
         return
 
-    # ==================== 2. HTTP 严格 301/302 + Response Header 校验 ====================
+    # ==================== 2. HTTP 严格 301/302 校验 ====================
     sem = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
     print(f"[2/3 第二阶段 HTTP 校验] 正在快速校验 {len(pass_1)} 个候选目标...", flush=True)
     tasks2 = [check_http_async(ip, port, CF_HOST_TEST, STAGE2_TIMEOUT, sem) for ip, port in pass_1]
@@ -383,6 +412,7 @@ async def main():
     print("\n==================== 扫描结束 ====================", flush=True)
     print(f"最终有效目标总数: {len(final_items)}", flush=True)
 
+    # 提取输入的第一个目标作为文件名 (严格等同输入参数，例如 AS137535.txt)
     clean_name = re.sub(r'[^\w\.-]', '_', target_input.split(',')[0].strip())
     output_filename = f"{clean_name}.txt"
 
