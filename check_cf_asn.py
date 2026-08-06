@@ -39,7 +39,7 @@ DEFAULT_PORTS = "443, 8443, 2053, 2083, 2096"
 CUSTOM_CF_DOMAIN = os.getenv("CUSTOM_CF_DOMAIN", "327954.ccwu.cc")
 
 CF_SNI_1 = "www.cloudflare.com"
-STAGE1_CONCURRENCY = 100
+STAGE1_CONCURRENCY = int(os.getenv("STAGE1_CONCURRENCY", "1500"))
 STAGE1_TIMEOUT = 2
 
 CF_HOST_TEST = "crypto.cloudflare.com"
