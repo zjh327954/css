@@ -16,10 +16,6 @@ on:
         required: true
         default: '100'
 
-concurrency:
-  group: git-push-main
-  cancel-in-progress: false
-
 jobs:
   scan:
     runs-on: ubuntu-latest
