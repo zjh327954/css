@@ -413,9 +413,14 @@ async def main():
     print("\n==================== 扫描结束 ====================", flush=True)
     print(f"最终有效目标总数: {len(final_items)}", flush=True)
 
-    # 提取输入的第一个目标作为文件名 (严格等同输入参数，例如 AS137535.txt)
-    clean_name = re.sub(r'[^\w\.-]', '_', target_input.split(',')[0].strip())
-    output_filename = f"{clean_name}.txt"
+    # 替换非法字符
+    clean_input = re.sub(r'[^\w\.-]', '_', target_input.strip())
+    
+    # 防止文件名超过 Linux 255 字节限制（输入多网段时自动截断）
+    if len(clean_input) > 30:
+        output_filename = f"{clean_input[:30]}_batch.txt"
+    else:
+        output_filename = f"{clean_input}.txt"
 
     with open(output_filename, "w", encoding="utf-8") as f:
         for ip, port in final_items:
