@@ -345,7 +345,8 @@ async def main():
     targets = [(ip, port) for ip in all_ips for port in target_ports]
     total_targets_count = len(targets)
     
-    print(f"[*] 引擎初始化：uvloop={UVLOOP_ENABLED} | 并行进程数={CPU_CORES}", flush=True)
+    total_concurrency = STAGE1_CONCURRENCY * CPU_CORES
+    print(f"[*] 引擎初始化：uvloop={UVLOOP_ENABLED} | 进程数={CPU_CORES} | 单进程并发={STAGE1_CONCURRENCY} | 总并发数={total_concurrency}", flush=True)
     print(f"[*] 解析完成：{len(all_ips)} 个 IP × {len(target_ports)} 个端口 = 共 {total_targets_count:,} 个测试目标。", flush=True)
 
     # ==================== 1. 多进程 TLS 粗筛 ====================
