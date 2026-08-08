@@ -1,4 +1,4 @@
-Name: '二改证书'
+name: '二改证书'
 
 on:
   workflow_dispatch:
