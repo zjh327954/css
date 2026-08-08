@@ -12,8 +12,11 @@ import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from functools import lru_cache
 
-# 获取当前脚本所在的绝对路径（仓库根目录）
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# ==================== 路径修复 ====================
+# 获取当前脚本所在文件夹路径 (仓库/脚本)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# 向上退一级，精准定位项目根目录 (仓库根目录)
+BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 
 # ==================== 常见国家/地区别名映射表 ====================
 REGION_ALIASES = {
@@ -487,7 +490,7 @@ async def main():
     else:
         filename = f"{raw_filename}.txt"
 
-    # 指定输出保存路径为 '优选反代ip' 目录
+    # 指定输出保存路径为根目录下的 '优选反代ip' 目录
     output_dir = os.path.join(BASE_DIR, "优选反代ip")
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, filename)
