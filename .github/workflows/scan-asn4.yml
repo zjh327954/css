@@ -1,4 +1,4 @@
-name: '测试'
+Name: '测试'
 
 on:
   workflow_dispatch:
@@ -57,3 +57,5 @@ jobs:
         with:
           commit_message: "Update scanned ASN txt files [skip ci]"
           file_pattern: "**/*.txt"
+          pull_strategy: 'NO-FF'
+          push_options: '--force'
