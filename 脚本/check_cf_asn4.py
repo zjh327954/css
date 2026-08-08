@@ -11,11 +11,10 @@ import socket
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from functools import lru_cache
+from collections import defaultdict
 
 # ==================== 路径修复 ====================
-# 获取当前脚本所在文件夹路径 (仓库/脚本)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-# 向上退一级，精准定位项目根目录 (仓库根目录)
 BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 
 # ==================== 常见国家/地区别名映射表 ====================
@@ -36,7 +35,6 @@ def optimize_system_limits():
     """自动化调优系统文件句柄限制 (ulimit) 与内核网络参数 (sysctl)"""
     print("[*] 正在尝试优化系统内核与文件描述符限制...", flush=True)
 
-    # 1. 自动提升文件句柄限制 (ulimit -n)
     try:
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         target_limit = max(65535, hard)
@@ -46,7 +44,6 @@ def optimize_system_limits():
     except Exception as e:
         print(f"[-] 调整 ulimit 失败 (可能无权限): {e}", flush=True)
 
-    # 2. 修改内核网络参数 (需要 Root 权限)
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         sysctl_settings = {
             "/proc/sys/net/core/somaxconn": "65535",
@@ -64,10 +61,8 @@ def optimize_system_limits():
     else:
         print("[!] 提示: 当前非 Root 用户，跳过 sysctl 内核参数优化（若在 GitHub Actions 中默认是 Root）", flush=True)
 
-# 启动第一时间执行系统调优
 optimize_system_limits()
 
-# 尝试加载 uvloop 替代 Python 原生 asyncio 循环 (IO 性能提升 2~4 倍)
 try:
     import uvloop
     uvloop.install()
@@ -80,31 +75,22 @@ DEFAULT_TARGETS = os.getenv("TARGET_LIST", os.getenv("ASN_LIST", "AS36002"))
 DEFAULT_PORTS = "443, 8443, 2053, 2083, 2096"
 CUSTOM_CF_DOMAIN = os.getenv("CUSTOM_CF_DOMAIN", "327954.ccwu.cc")
 
-# 阶段 0：TCP 探活配置
 STAGE0_TIMEOUT = 0.8     # TCP 建连超短超时
-
-# 阶段 1：TLS 粗筛 (www.cloudflare.com)
 CF_SNI_1 = "www.cloudflare.com"
 STAGE1_CONCURRENCY = int(os.getenv("STAGE1_CONCURRENCY", "1500"))   # 单进程并发数
 STAGE1_TIMEOUT = 2        # 超时时间
 
-# 阶段 2：HTTP 验证 Host (crypto.cloudflare.com)
 CF_HOST_TEST = "crypto.cloudflare.com"
 STAGE2_TIMEOUT = 1.2
-
-# 阶段 3：自定义域名校验超时
 STAGE3_TIMEOUT = 1.2
 
-# CPU 核心数 (决定多进程并行数量)
 CPU_CORES = max(1, os.cpu_count() or 1)
 
-# 优化 SSL Context 避免不必要的握手开销
 SSL_CTX = ssl.create_default_context()
 SSL_CTX.check_hostname = False
 SSL_CTX.verify_mode = ssl.CERT_NONE
 SSL_CTX.options |= ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3
 
-# 全局共享变量定义 (多进程进度与通过数同步)
 global_counter = None
 global_pass_counter = None
 global_lock = None
@@ -114,7 +100,6 @@ global_printed_milestones = None
 # =========================================================
 
 def parse_ports(port_str):
-    """支持 443,8443 或 1-65535 范围解析"""
     if not port_str:
         return [443, 8443, 2053, 2083, 2096]
     
@@ -140,11 +125,10 @@ def parse_ports(port_str):
 
 @lru_cache(maxsize=64)
 def get_ips_from_asn_sync(asn_clean, target_region=""):
-    """精准只从 '优选asn段' 文件夹读取原始 CIDR 文件，并支持按地区筛选"""
-    cidrs = []
+    """读取包含地区名的 txt 文件，返回 (IP, 地区) 的列表"""
+    cidrs_with_region = []
     local_path = None
 
-    # 标准化地区过滤条件
     raw_filter = target_region.strip().lower() if target_region else ""
     mapped_region = REGION_ALIASES.get(raw_filter, raw_filter)
 
@@ -167,32 +151,30 @@ def get_ips_from_asn_sync(asn_clean, target_region=""):
 
         try:
             with open(local_path, "r", encoding="utf-8", errors="ignore") as f:
-                current_region = "默认"
+                current_region = "未归类"
                 for line in f:
                     line = line.strip()
                     if not line:
                         continue
                     
-                    # 尝试匹配 IP/CIDR
                     found_cidrs = re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', line)
                     if found_cidrs:
-                        # 若未指定地区，或当前行属于指定地区，则提取
                         if not mapped_region or mapped_region in current_region.lower():
-                            cidrs.extend(found_cidrs)
+                            for c in found_cidrs:
+                                cidrs_with_region.append((c, current_region))
                     else:
-                        # 遇到了非 IP 行，更新当前所在地区标识
                         current_region = line.strip()
 
-            print(f"[+] 从本地文件中解析出 {len(cidrs)} 个符合条件的 IP 段", flush=True)
+            print(f"[+] 从本地文件中解析出 {len(cidrs_with_region)} 个符合条件的 IP 段", flush=True)
         except Exception as e:
             print(f"[-] 读取本地文件 {local_path} 失败: {e}", flush=True)
     else:
         print(f"\n[!] 未在 '优选asn段' 目录下找到 {asn_clean}.txt，正在发起网络 API 提取 AS{asn_clean}...", flush=True)
 
-    # 本地未获取到有效 CIDR（且未设置地区筛选）时，降级发起网络 API 查询
-    if not cidrs and not mapped_region:
+    # 网络 API 降级提取 (标记为 未归类)
+    if not cidrs_with_region and not mapped_region:
         import urllib.request
-        # 源 1: RIPE API
+        fallback_cidrs = []
         try:
             ripe_url = f"https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{asn_clean}"
             req = urllib.request.Request(ripe_url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -202,12 +184,11 @@ def get_ips_from_asn_sync(asn_clean, target_region=""):
                 for p in prefixes:
                     prefix = p.get("prefix")
                     if prefix and ":" not in prefix:
-                        cidrs.append(prefix)
+                        fallback_cidrs.append(prefix)
         except Exception:
             pass
 
-        # 源 2: BGPView API 兜底
-        if not cidrs:
+        if not fallback_cidrs:
             try:
                 bgp_url = f"https://api.bgpview.io/asn/{asn_clean}/prefixes"
                 req = urllib.request.Request(bgp_url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -217,55 +198,60 @@ def get_ips_from_asn_sync(asn_clean, target_region=""):
                     for p in ipv4_prefixes:
                         prefix = p.get("prefix")
                         if prefix:
-                            cidrs.append(prefix)
+                            fallback_cidrs.append(prefix)
             except Exception:
                 pass
+        
+        for c in fallback_cidrs:
+            cidrs_with_region.append((c, "未归类"))
 
-    ip_list = []
-    for cidr in cidrs:
+    ip_region_list = []
+    for cidr, reg in cidrs_with_region:
         try:
             net = ipaddress.ip_network(cidr, strict=False)
             if net.prefixlen >= 31:
-                ip_list.extend([str(ip) for ip in net])
+                ip_region_list.extend([(str(ip), reg) for ip in net])
             else:
-                ip_list.extend([str(ip) for ip in net.hosts()])
+                ip_region_list.extend([(str(ip), reg) for ip in net.hosts()])
         except Exception:
             continue
 
-    return ip_list
+    return ip_region_list
 
 
 async def parse_targets_async(input_str, target_region=""):
-    """支持混入各种字符/中文分隔符解析输入"""
     loop = asyncio.get_running_loop()
     raw_targets = [t.strip() for t in re.split(r'[\s,;,]+', input_str) if t.strip()]
-    all_ips = []
+    all_ip_tuples = []
 
     for item in raw_targets:
-        # 直接解析 CIDR 或 IP
         try:
             net = ipaddress.ip_network(item, strict=False)
             if net.prefixlen >= 31:
-                all_ips.extend([str(ip) for ip in net])
+                all_ip_tuples.extend([(str(ip), "自定义段") for ip in net])
             else:
-                all_ips.extend([str(ip) for ip in net.hosts()])
+                all_ip_tuples.extend([(str(ip), "自定义段") for ip in net.hosts()])
             continue
         except ValueError:
             pass
 
-        # 尝试按 ASN 处理 (支持 AS137535 或单纯数字 137535)
         asn_clean = item.upper().replace("AS", "")
         if asn_clean.isdigit():
-            ips = await loop.run_in_executor(None, get_ips_from_asn_sync, asn_clean, target_region)
-            all_ips.extend(ips)
+            ips_with_reg = await loop.run_in_executor(None, get_ips_from_asn_sync, asn_clean, target_region)
+            all_ip_tuples.extend(ips_with_reg)
 
-    unique_ips = list(dict.fromkeys(all_ips))
+    # 去重并打乱
+    unique_map = {}
+    for ip, reg in all_ip_tuples:
+        if ip not in unique_map:
+            unique_map[ip] = reg
+            
+    unique_ips = list(unique_map.items())
     random.shuffle(unique_ips)
     return unique_ips
 
 
 async def check_tcp_open_async(ip, port, timeout_val, sem):
-    """阶段零：极速 TCP 建连探活（检测端口是否开放）"""
     async with sem:
         writer = None
         try:
@@ -304,7 +290,6 @@ def match_domain_in_cert(sni_domain, cert_str):
 
 
 async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
-    """阶段一/阶段三：异步 TLS 握手优化"""
     async with sem:
         writer = None
         try:
@@ -337,7 +322,6 @@ async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
 
 
 async def check_http_async(ip, port, host, timeout_val, sem):
-    """阶段二：校验 HTTP 301/302 重定向"""
     async with sem:
         writer = None
         try:
@@ -370,30 +354,26 @@ async def check_http_async(ip, port, host, timeout_val, sem):
                     pass
 
 
-# ==================== 多进程共享变量初始化 ====================
 def _init_process_worker(counter, pass_counter, lock, total, printed_array):
-    """初始化子进程的全局锁与共享内存计数器"""
     global global_counter, global_pass_counter, global_lock, global_total, global_step, global_printed_milestones
     global_counter = counter
     global_pass_counter = pass_counter
     global_lock = lock
     global_total = total
-    global_step = max(1, total // 10)  # 全局总量的 10% 步长
+    global_step = max(1, total // 10)
     global_printed_milestones = printed_array
 
 
 def _process_worker_stage1(targets_chunk):
-    """子进程内部运行独立的 uvloop/asyncio 事件循环，同步全局 10% 进度及通过数"""
     if UVLOOP_ENABLED:
         uvloop.install()
         
     async def _run():
         sem = asyncio.Semaphore(STAGE1_CONCURRENCY)
 
-        async def worker(ip, port):
+        async def worker(ip, port, region):
             res = await check_tls_sni_async(ip, port, CF_SNI_1, STAGE1_TIMEOUT, sem)
             
-            # 使用原子锁更新全局共享计数器
             with global_lock:
                 global_counter.value += 1
                 if res:
@@ -402,7 +382,6 @@ def _process_worker_stage1(targets_chunk):
                 curr = global_counter.value
                 passed = global_pass_counter.value
                 
-                # 计算当前处于全局第几个 10% 节点
                 milestone_idx = curr // global_step
                 if 1 <= milestone_idx <= 10:
                     if global_printed_milestones[milestone_idx - 1] == 0:
@@ -412,7 +391,7 @@ def _process_worker_stage1(targets_chunk):
 
             return res
 
-        tasks = [worker(ip, port) for ip, port in targets_chunk]
+        tasks = [worker(ip, port, region) for ip, port, region in targets_chunk]
         results = await asyncio.gather(*tasks)
         return [targets_chunk[i] for i, ok in enumerate(results) if ok]
 
@@ -427,23 +406,24 @@ async def main():
     target_ports = parse_ports(ports_input)
     
     print(f"\n[*] 正在解析目标地址/ASN: {target_input} (筛选国家/地区: '{region_input or '全部'}') ...", flush=True)
-    all_ips = await parse_targets_async(target_input, region_input)
+    all_ips_with_region = await parse_targets_async(target_input, region_input)
 
-    if not all_ips:
+    if not all_ips_with_region:
         print("[-] 未能获取到任何待测 IP，程序退出。", flush=True)
         return
 
-    targets = [(ip, port) for ip in all_ips for port in target_ports]
+    # 包含 (IP, Port, Region) 三元组
+    targets = [(ip, port, reg) for ip, reg in all_ips_with_region for port in target_ports]
     total_targets_count = len(targets)
     
     total_concurrency = STAGE1_CONCURRENCY * CPU_CORES
     print(f"[*] 引擎初始化：uvloop={UVLOOP_ENABLED} | 进程数={CPU_CORES} | 单进程并发={STAGE1_CONCURRENCY} | 总并发数={total_concurrency}", flush=True)
-    print(f"[*] 解析完成：{len(all_ips)} 个 IP × {len(target_ports)} 个端口 = 共 {total_targets_count:,} 个测试目标。", flush=True)
+    print(f"[*] 解析完成：{len(all_ips_with_region)} 个 IP × {len(target_ports)} 个端口 = 共 {total_targets_count:,} 个测试目标。", flush=True)
 
     # ==================== 0. TCP 极速端口开放检测 ====================
     sem_tcp = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
     print(f"\n[0/3 阶段零 TCP 端口探活] 正在对 {total_targets_count:,} 个目标进行极速端口探测...", flush=True)
-    tasks0 = [check_tcp_open_async(ip, port, STAGE0_TIMEOUT, sem_tcp) for ip, port in targets]
+    tasks0 = [check_tcp_open_async(ip, port, STAGE0_TIMEOUT, sem_tcp) for ip, port, reg in targets]
     res0 = await asyncio.gather(*tasks0)
     pass_0 = [targets[i] for i, ok in enumerate(res0) if ok]
     
@@ -461,12 +441,11 @@ async def main():
     chunk_size = max(1, total_targets_count // num_chunks)
     chunks = [pass_0[i:i + chunk_size] for i in range(0, total_targets_count, chunk_size)]
 
-    # 创建跨进程共享内存对象
     manager = multiprocessing.Manager()
-    counter = manager.Value('i', 0)        # 已测试总数
-    pass_counter = manager.Value('i', 0)   # 匹配通过总数
+    counter = manager.Value('i', 0)
+    pass_counter = manager.Value('i', 0)
     lock = manager.Lock()
-    printed_array = manager.Array('i', [0] * 10) # 记录 10% ~ 100% 打印标记位
+    printed_array = manager.Array('i', [0] * 10)
 
     pass_1 = []
     loop = asyncio.get_running_loop()
@@ -490,7 +469,7 @@ async def main():
     # ==================== 2. HTTP 严格 301/302 校验 ====================
     sem = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
     print(f"[2/3 第二阶段 HTTP 校验] 正在快速校验 {len(pass_1)} 个候选目标...", flush=True)
-    tasks2 = [check_http_async(ip, port, CF_HOST_TEST, STAGE2_TIMEOUT, sem) for ip, port in pass_1]
+    tasks2 = [check_http_async(ip, port, CF_HOST_TEST, STAGE2_TIMEOUT, sem) for ip, port, reg in pass_1]
     res2 = await asyncio.gather(*tasks2)
     pass_2 = [pass_1[i] for i, ok in enumerate(res2) if ok]
     print(f"[+] 第二阶段完成！可用 301 重定向目标: {len(pass_2)} 个\n", flush=True)
@@ -504,38 +483,43 @@ async def main():
     if CUSTOM_CF_DOMAIN and CUSTOM_CF_DOMAIN.strip():
         domain = CUSTOM_CF_DOMAIN.strip()
         print(f"[3/3 第三阶段自定义域名校验] 正在校验域名 {domain}...", flush=True)
-        tasks3 = [check_tls_sni_async(ip, port, domain, STAGE3_TIMEOUT, sem) for ip, port in pass_2]
+        tasks3 = [check_tls_sni_async(ip, port, domain, STAGE3_TIMEOUT, sem) for ip, port, reg in pass_2]
         res3 = await asyncio.gather(*tasks3)
         final_items = [pass_2[i] for i, ok in enumerate(res3) if ok]
         print(f"[+] 第三阶段完成！支持自定义托管域名的优选反代 IP: {len(final_items)} 个", flush=True)
     else:
         print("[3/3] 未检测到 CUSTOM_CF_DOMAIN，自动跳过第三阶段。", flush=True)
 
-    final_items = sorted(final_items, key=lambda x: (ipaddress.ip_address(x[0]), x[1]))
-
-    # ==================== 导出结果 ====================
+    # ==================== 按地区归类与导出结果 ====================
     print("\n==================== 扫描结束 ====================", flush=True)
     print(f"最终有效目标总数: {len(final_items)}", flush=True)
+
+    # 将结果按照 地区分组 -> IP 升序 排序
+    grouped_results = defaultdict(list)
+    for ip, port, region in final_items:
+        grouped_results[region].append((ip, port))
 
     tag = f"_{region_input.strip()}" if region_input.strip() else ""
     clean_input = re.sub(r'[^\w\.-]', '_', target_input.strip())
     
     raw_filename = f"{clean_input}{tag}"
-    if len(raw_filename) > 30:
-        filename = f"{raw_filename[:30]}_batch.txt"
-    else:
-        filename = f"{raw_filename}.txt"
+    filename = f"{raw_filename[:30]}_batch.txt" if len(raw_filename) > 30 else f"{raw_filename}.txt"
 
-    # 指定输出保存路径为根目录下的 '优选反代ip' 目录
     output_dir = os.path.join(BASE_DIR, "优选反代ip")
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, filename)
 
+    # 写入文件（按国家/地区块格式）
     with open(output_path, "w", encoding="utf-8") as f:
-        for ip, port in final_items:
-            f.write(f"{ip}:{port}\n")
+        for region, nodes in grouped_results.items():
+            # 按 IP 升序排序
+            sorted_nodes = sorted(nodes, key=lambda x: (ipaddress.ip_address(x[0]), x[1]))
+            f.write(f"{region}\n")
+            for ip, port in sorted_nodes:
+                f.write(f"{ip}:{port}\n")
+            f.write("\n")  # 地区块之间加换行隔离
 
-    print(f"\n[+] 最终结果已排序保存至：{output_path} (格式为 IP:PORT)", flush=True)
+    print(f"\n[+] 最终结果已按国家/地区分类保存至：{output_path}", flush=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
