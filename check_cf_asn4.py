@@ -12,7 +12,7 @@ import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from functools import lru_cache
 
-# 获取当前脚本所在目录的绝对路径，确保文件路径不受运行工作目录影响
+# 获取当前脚本所在的绝对路径（仓库根目录）
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ==================== 0. 自动优化系统内核与文件句柄限制 ====================
@@ -121,18 +121,17 @@ def parse_ports(port_str):
 
 @lru_cache(maxsize=64)
 def get_ips_from_asn_sync(asn_clean):
-    """优先读取本地 css/优选asn段/ 下的文件，若不存在则降级发起网络 API 查询"""
+    """精准只从 '优选asn段' 文件夹读取原始 CIDR 文件，彻底隔离根目录的输出结果"""
     cidrs = []
-    
-    # 基于 BASE_DIR 使用绝对路径拼接，解决 Actions 工作目录不一致问题
-    possible_files = [
-        os.path.join(BASE_DIR, "css", "优选asn段", f"{asn_clean}.txt"),
-        os.path.join(BASE_DIR, "css", "优选asn段", f"AS{asn_clean}.txt")
-    ]
-    
     local_path = None
-    for p in possible_files:
-        if os.path.exists(p):
+
+    possible_paths = [
+        os.path.join(BASE_DIR, "优选asn段", f"{asn_clean}.txt"),
+        os.path.join(BASE_DIR, "优选asn段", f"AS{asn_clean}.txt")
+    ]
+
+    for p in possible_paths:
+        if os.path.isfile(p):
             local_path = p
             break
 
@@ -144,14 +143,14 @@ def get_ips_from_asn_sync(asn_clean):
                     line = line.strip()
                     if not line:
                         continue
-                    # 匹配 IP/CIDR，自动跳过中文（如“联通”）或非 IP 文本
+                    # 自动提取 IP/CIDR，跳过中文及非 IP 文本
                     found_cidrs = re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', line)
                     cidrs.extend(found_cidrs)
             print(f"[+] 从本地文件中解析出 {len(cidrs)} 个 IP 段", flush=True)
         except Exception as e:
             print(f"[-] 读取本地文件 {local_path} 失败: {e}", flush=True)
     else:
-        print(f"\n[!] 未找到本地文件 css/优选asn段/{asn_clean}.txt，正在发起网络 API 提取 AS{asn_clean}...", flush=True)
+        print(f"\n[!] 未在 '优选asn段' 目录下找到 {asn_clean}.txt，正在发起网络 API 提取 AS{asn_clean}...", flush=True)
 
     # 本地未获取到有效 CIDR 时，降级发起网络 API 查询
     if not cidrs:
@@ -350,7 +349,6 @@ def _process_worker_stage1(targets_chunk):
                 # 计算当前处于全局第几个 10% 节点
                 milestone_idx = curr // global_step
                 if 1 <= milestone_idx <= 10:
-                    # 确保每个 10% 阶段全局只会被一个进程打印一次
                     if global_printed_milestones[milestone_idx - 1] == 0:
                         global_printed_milestones[milestone_idx - 1] = 1
                         pct = min(100, milestone_idx * 10)
@@ -402,7 +400,6 @@ async def main():
     pass_1 = []
     loop = asyncio.get_running_loop()
     
-    # 传入 initializer 将共享锁与共享变量注入各个子进程
     with ProcessPoolExecutor(
         max_workers=CPU_CORES,
         initializer=_init_process_worker,
@@ -449,15 +446,14 @@ async def main():
     print("\n==================== 扫描结束 ====================", flush=True)
     print(f"最终有效目标总数: {len(final_items)}", flush=True)
 
-    # 替换非法字符
     clean_input = re.sub(r'[^\w\.-]', '_', target_input.strip())
     
-    # 防止文件名超过 Linux 255 字节限制（输入多网段时自动截断）
     if len(clean_input) > 30:
         output_filename = f"{clean_input[:30]}_batch.txt"
     else:
         output_filename = f"{clean_input}.txt"
 
+    # 将优选出的结果保存在根目录
     with open(output_filename, "w", encoding="utf-8") as f:
         for ip, port in final_items:
             f.write(f"{ip}:{port}\n")
