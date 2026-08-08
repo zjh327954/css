@@ -12,6 +12,9 @@ import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from functools import lru_cache
 
+# 获取当前脚本所在的绝对路径（仓库根目录）
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # ==================== 0. 自动优化系统内核与文件句柄限制 ====================
 def optimize_system_limits():
     """自动化调优系统文件句柄限制 (ulimit) 与内核网络参数 (sysctl)"""
@@ -418,15 +421,20 @@ async def main():
     
     # 防止文件名超过 Linux 255 字节限制（输入多网段时自动截断）
     if len(clean_input) > 30:
-        output_filename = f"{clean_input[:30]}_batch.txt"
+        filename = f"{clean_input[:30]}_batch.txt"
     else:
-        output_filename = f"{clean_input}.txt"
+        filename = f"{clean_input}.txt"
 
-    with open(output_filename, "w", encoding="utf-8") as f:
+    # 指定输出保存路径为 '优选反代ip' 目录
+    output_dir = os.path.join(BASE_DIR, "优选反代ip")
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, filename)
+
+    with open(output_path, "w", encoding="utf-8") as f:
         for ip, port in final_items:
             f.write(f"{ip}:{port}\n")
 
-    print(f"\n[+] 最终结果已排序保存至：{output_filename} (格式为 IP:PORT)", flush=True)
+    print(f"\n[+] 最终结果已排序保存至：{output_path} (格式为 IP:PORT)", flush=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
