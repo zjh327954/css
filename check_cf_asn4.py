@@ -12,6 +12,9 @@ import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from functools import lru_cache
 
+# 获取当前脚本所在目录的绝对路径，确保文件路径不受运行工作目录影响
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # ==================== 0. 自动优化系统内核与文件句柄限制 ====================
 def optimize_system_limits():
     """自动化调优系统文件句柄限制 (ulimit) 与内核网络参数 (sysctl)"""
@@ -121,10 +124,10 @@ def get_ips_from_asn_sync(asn_clean):
     """优先读取本地 css/优选asn段/ 下的文件，若不存在则降级发起网络 API 查询"""
     cidrs = []
     
-    # 兼容 137535.txt 或 AS137535.txt 两种文件名
+    # 基于 BASE_DIR 使用绝对路径拼接，解决 Actions 工作目录不一致问题
     possible_files = [
-        os.path.join("css", "优选asn段", f"{asn_clean}.txt"),
-        os.path.join("css", "优选asn段", f"AS{asn_clean}.txt")
+        os.path.join(BASE_DIR, "css", "优选asn段", f"{asn_clean}.txt"),
+        os.path.join(BASE_DIR, "css", "优选asn段", f"AS{asn_clean}.txt")
     ]
     
     local_path = None
@@ -199,7 +202,6 @@ def get_ips_from_asn_sync(asn_clean):
 async def parse_targets_async(input_str):
     """支持混入各种字符/中文分隔符解析输入"""
     loop = asyncio.get_running_loop()
-    # 提取符合 IP/CIDR/ASN 格式的有效字符串块，过滤掉纯中文词组
     raw_targets = [t.strip() for t in re.split(r'[\s,;,]+', input_str) if t.strip()]
     all_ips = []
 
