@@ -80,6 +80,9 @@ DEFAULT_TARGETS = os.getenv("TARGET_LIST", os.getenv("ASN_LIST", "AS36002"))
 DEFAULT_PORTS = "443, 8443, 2053, 2083, 2096"
 CUSTOM_CF_DOMAIN = os.getenv("CUSTOM_CF_DOMAIN", "327954.ccwu.cc")
 
+# 阶段 0：TCP 探活配置
+STAGE0_TIMEOUT = 0.8     # TCP 建连超短超时
+
 # 阶段 1：TLS 粗筛 (www.cloudflare.com)
 CF_SNI_1 = "www.cloudflare.com"
 STAGE1_CONCURRENCY = int(os.getenv("STAGE1_CONCURRENCY", "1500"))   # 单进程并发数
@@ -261,6 +264,25 @@ async def parse_targets_async(input_str, target_region=""):
     return unique_ips
 
 
+async def check_tcp_open_async(ip, port, timeout_val, sem):
+    """阶段零：极速 TCP 建连探活（检测端口是否开放）"""
+    async with sem:
+        writer = None
+        try:
+            conn = asyncio.open_connection(ip, port)
+            reader, writer = await asyncio.wait_for(conn, timeout=timeout_val)
+            return True
+        except Exception:
+            return False
+        finally:
+            if writer:
+                writer.close()
+                try:
+                    writer.transport.abort()
+                except Exception:
+                    pass
+
+
 def match_domain_in_cert(sni_domain, cert_str):
     sni_domain = sni_domain.lower()
     cert_str = cert_str.lower()
@@ -418,12 +440,26 @@ async def main():
     print(f"[*] 引擎初始化：uvloop={UVLOOP_ENABLED} | 进程数={CPU_CORES} | 单进程并发={STAGE1_CONCURRENCY} | 总并发数={total_concurrency}", flush=True)
     print(f"[*] 解析完成：{len(all_ips)} 个 IP × {len(target_ports)} 个端口 = 共 {total_targets_count:,} 个测试目标。", flush=True)
 
+    # ==================== 0. TCP 极速端口开放检测 ====================
+    sem_tcp = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
+    print(f"\n[0/3 阶段零 TCP 端口探活] 正在对 {total_targets_count:,} 个目标进行极速端口探测...", flush=True)
+    tasks0 = [check_tcp_open_async(ip, port, STAGE0_TIMEOUT, sem_tcp) for ip, port in targets]
+    res0 = await asyncio.gather(*tasks0)
+    pass_0 = [targets[i] for i, ok in enumerate(res0) if ok]
+    
+    print(f"[+] TCP 端口探活完成！开放端口目标: {len(pass_0):,} 个 (已过滤掉 {total_targets_count - len(pass_0):,} 个关闭端口)\n", flush=True)
+
+    if not pass_0:
+        print("[-] 无任何开放端口，程序退出。", flush=True)
+        return
+
     # ==================== 1. 多进程 TLS 粗筛 ====================
-    print(f"\n[1/3 第一阶段 TLS 探测] 多进程并行并发中...", flush=True)
+    total_targets_count = len(pass_0)
+    print(f"[1/3 第一阶段 TLS 探测] 多进程并行并发中 (待测开放目标: {total_targets_count:,} 个)...", flush=True)
     
     num_chunks = CPU_CORES * 4
     chunk_size = max(1, total_targets_count // num_chunks)
-    chunks = [targets[i:i + chunk_size] for i in range(0, total_targets_count, chunk_size)]
+    chunks = [pass_0[i:i + chunk_size] for i in range(0, total_targets_count, chunk_size)]
 
     # 创建跨进程共享内存对象
     manager = multiprocessing.Manager()
