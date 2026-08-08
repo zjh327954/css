@@ -14,7 +14,7 @@ on:
       ports_input:
         description: '需要扫描的端口号 (多个端口用逗号或空格隔开)'
         required: true
-        default: '443 8443'
+        default: '443 8443 2053 2083 2087 2096'
       concurrency_input:
         description: '单进程并发速率 (如 1000/1500/2000)'
         required: true
