@@ -118,26 +118,39 @@ def parse_ports(port_str):
 
 @lru_cache(maxsize=64)
 def get_ips_from_asn_sync(asn_clean):
-    """优先读取本地 css/优选asn段/{asn_clean}.txt，若不存在则降级发起网络 API 查询"""
+    """优先读取本地 css/优选asn段/ 下的文件，若不存在则降级发起网络 API 查询"""
     cidrs = []
     
-    # 1. 尝试读取本地本地文件 (自动处理不同操作系统的路径分隔符)
-    local_path = os.path.join("css", "优选asn段", f"{asn_clean}.txt")
-    if os.path.exists(local_path):
-        print(f"[+] 发现本地 ASN 映射文件: {local_path}，直接读取...", flush=True)
+    # 兼容 137535.txt 或 AS137535.txt 两种文件名
+    possible_files = [
+        os.path.join("css", "优选asn段", f"{asn_clean}.txt"),
+        os.path.join("css", "优选asn段", f"AS{asn_clean}.txt")
+    ]
+    
+    local_path = None
+    for p in possible_files:
+        if os.path.exists(p):
+            local_path = p
+            break
+
+    if local_path:
+        print(f"\n[+] 【成功读取本地文件】: {local_path}", flush=True)
         try:
             with open(local_path, "r", encoding="utf-8", errors="ignore") as f:
                 for line in f:
                     line = line.strip()
                     if not line:
                         continue
-                    # 正则强匹配 IPv4/CIDR，自动过滤中文（如“联通”）或非 IP 文本
+                    # 匹配 IP/CIDR，自动跳过中文（如“联通”）或非 IP 文本
                     found_cidrs = re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', line)
                     cidrs.extend(found_cidrs)
+            print(f"[+] 从本地文件中解析出 {len(cidrs)} 个 IP 段", flush=True)
         except Exception as e:
             print(f"[-] 读取本地文件 {local_path} 失败: {e}", flush=True)
+    else:
+        print(f"\n[!] 未找到本地文件 css/优选asn段/{asn_clean}.txt，正在发起网络 API 提取 AS{asn_clean}...", flush=True)
 
-    # 2. 本地不存在或未解析出有效 CIDR，降级走网络查询
+    # 本地未获取到有效 CIDR 时，降级发起网络 API 查询
     if not cidrs:
         import urllib.request
         # 源 1: RIPE API
@@ -169,7 +182,6 @@ def get_ips_from_asn_sync(asn_clean):
             except Exception:
                 pass
 
-    # 3. 将 CIDR 解析展开为具体 IP 列表
     ip_list = []
     for cidr in cidrs:
         try:
