@@ -121,7 +121,7 @@ def parse_ports(port_str):
 
 @lru_cache(maxsize=64)
 def get_ips_from_asn_sync(asn_clean):
-    """精准只从 '优选asn段' 文件夹读取原始 CIDR 文件，彻底隔离根目录的输出结果"""
+    """精准只从 '优选asn段' 文件夹读取原始 CIDR 文件"""
     cidrs = []
     local_path = None
 
@@ -449,16 +449,20 @@ async def main():
     clean_input = re.sub(r'[^\w\.-]', '_', target_input.strip())
     
     if len(clean_input) > 30:
-        output_filename = f"{clean_input[:30]}_batch.txt"
+        filename = f"{clean_input[:30]}_batch.txt"
     else:
-        output_filename = f"{clean_input}.txt"
+        filename = f"{clean_input}.txt"
 
-    # 将优选出的结果保存在根目录
-    with open(output_filename, "w", encoding="utf-8") as f:
+    # 指定输出保存路径为 '优选反代ip' 目录
+    output_dir = os.path.join(BASE_DIR, "优选反代ip")
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, filename)
+
+    with open(output_path, "w", encoding="utf-8") as f:
         for ip, port in final_items:
             f.write(f"{ip}:{port}\n")
 
-    print(f"\n[+] 最终结果已排序保存至：{output_filename} (格式为 IP:PORT)", flush=True)
+    print(f"\n[+] 最终结果已排序保存至：{output_path} (格式为 IP:PORT)", flush=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
