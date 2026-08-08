@@ -15,6 +15,19 @@ from functools import lru_cache
 # 获取当前脚本所在的绝对路径（仓库根目录）
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# ==================== 常见国家/地区别名映射表 ====================
+REGION_ALIASES = {
+    "hk": "香港", "hongkong": "香港", "hong kong": "香港",
+    "tw": "台湾", "taiwan": "台湾",
+    "jp": "日本", "japan": "日本",
+    "sg": "新加坡", "singapore": "新加坡",
+    "us": "美国", "usa": "美国", "united states": "美国",
+    "uk": "英国", "united kingdom": "英国",
+    "kr": "韩国", "korea": "韩国",
+    "de": "德国", "germany": "德国",
+    "fr": "法国", "france": "法国"
+}
+
 # ==================== 0. 自动优化系统内核与文件句柄限制 ====================
 def optimize_system_limits():
     """自动化调优系统文件句柄限制 (ulimit) 与内核网络参数 (sysctl)"""
@@ -120,10 +133,14 @@ def parse_ports(port_str):
 
 
 @lru_cache(maxsize=64)
-def get_ips_from_asn_sync(asn_clean):
-    """精准只从 '优选asn段' 文件夹读取原始 CIDR 文件"""
+def get_ips_from_asn_sync(asn_clean, target_region=""):
+    """精准只从 '优选asn段' 文件夹读取原始 CIDR 文件，并支持按地区筛选"""
     cidrs = []
     local_path = None
+
+    # 标准化地区过滤条件
+    raw_filter = target_region.strip().lower() if target_region else ""
+    mapped_region = REGION_ALIASES.get(raw_filter, raw_filter)
 
     possible_paths = [
         os.path.join(BASE_DIR, "优选asn段", f"{asn_clean}.txt"),
@@ -137,23 +154,37 @@ def get_ips_from_asn_sync(asn_clean):
 
     if local_path:
         print(f"\n[+] 【成功读取本地文件】: {local_path}", flush=True)
+        if mapped_region:
+            print(f"[*] 正在按地区匹配: '{target_region}' (过滤关键词: '{mapped_region}')", flush=True)
+        else:
+            print(f"[*] 未指定地区过滤，读取全部 IP 段", flush=True)
+
         try:
             with open(local_path, "r", encoding="utf-8", errors="ignore") as f:
+                current_region = "默认"
                 for line in f:
                     line = line.strip()
                     if not line:
                         continue
-                    # 自动提取 IP/CIDR，跳过中文及非 IP 文本
+                    
+                    # 尝试匹配 IP/CIDR
                     found_cidrs = re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', line)
-                    cidrs.extend(found_cidrs)
-            print(f"[+] 从本地文件中解析出 {len(cidrs)} 个 IP 段", flush=True)
+                    if found_cidrs:
+                        # 若未指定地区，或当前行属于指定地区，则提取
+                        if not mapped_region or mapped_region in current_region.lower():
+                            cidrs.extend(found_cidrs)
+                    else:
+                        # 遇到了非 IP 行，更新当前所在地区标识
+                        current_region = line.strip()
+
+            print(f"[+] 从本地文件中解析出 {len(cidrs)} 个符合条件的 IP 段", flush=True)
         except Exception as e:
             print(f"[-] 读取本地文件 {local_path} 失败: {e}", flush=True)
     else:
         print(f"\n[!] 未在 '优选asn段' 目录下找到 {asn_clean}.txt，正在发起网络 API 提取 AS{asn_clean}...", flush=True)
 
-    # 本地未获取到有效 CIDR 时，降级发起网络 API 查询
-    if not cidrs:
+    # 本地未获取到有效 CIDR（且未设置地区筛选）时，降级发起网络 API 查询
+    if not cidrs and not mapped_region:
         import urllib.request
         # 源 1: RIPE API
         try:
@@ -198,7 +229,7 @@ def get_ips_from_asn_sync(asn_clean):
     return ip_list
 
 
-async def parse_targets_async(input_str):
+async def parse_targets_async(input_str, target_region=""):
     """支持混入各种字符/中文分隔符解析输入"""
     loop = asyncio.get_running_loop()
     raw_targets = [t.strip() for t in re.split(r'[\s,;,]+', input_str) if t.strip()]
@@ -219,7 +250,7 @@ async def parse_targets_async(input_str):
         # 尝试按 ASN 处理 (支持 AS137535 或单纯数字 137535)
         asn_clean = item.upper().replace("AS", "")
         if asn_clean.isdigit():
-            ips = await loop.run_in_executor(None, get_ips_from_asn_sync, asn_clean)
+            ips = await loop.run_in_executor(None, get_ips_from_asn_sync, asn_clean, target_region)
             all_ips.extend(ips)
 
     unique_ips = list(dict.fromkeys(all_ips))
@@ -366,11 +397,12 @@ def _process_worker_stage1(targets_chunk):
 async def main():
     target_input = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_TARGETS
     ports_input = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_PORTS
+    region_input = sys.argv[3] if len(sys.argv) > 3 else ""
 
     target_ports = parse_ports(ports_input)
     
-    print(f"\n[*] 正在解析目标地址/ASN: {target_input} ...", flush=True)
-    all_ips = await parse_targets_async(target_input)
+    print(f"\n[*] 正在解析目标地址/ASN: {target_input} (筛选国家/地区: '{region_input or '全部'}') ...", flush=True)
+    all_ips = await parse_targets_async(target_input, region_input)
 
     if not all_ips:
         print("[-] 未能获取到任何待测 IP，程序退出。", flush=True)
@@ -446,12 +478,14 @@ async def main():
     print("\n==================== 扫描结束 ====================", flush=True)
     print(f"最终有效目标总数: {len(final_items)}", flush=True)
 
+    tag = f"_{region_input.strip()}" if region_input.strip() else ""
     clean_input = re.sub(r'[^\w\.-]', '_', target_input.strip())
     
-    if len(clean_input) > 30:
-        filename = f"{clean_input[:30]}_batch.txt"
+    raw_filename = f"{clean_input}{tag}"
+    if len(raw_filename) > 30:
+        filename = f"{raw_filename[:30]}_batch.txt"
     else:
-        filename = f"{clean_input}.txt"
+        filename = f"{raw_filename}.txt"
 
     # 指定输出保存路径为 '优选反代ip' 目录
     output_dir = os.path.join(BASE_DIR, "优选反代ip")
