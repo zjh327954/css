@@ -7,6 +7,10 @@ on:
         description: '扫描目标 (支持 ASN 如 AS36002、IP段如 203.66.11.0/20)'
         required: true
         default: 'AS'
+      region_input:
+        description: '筛选国家或地区名称/代号 (如 香港、hk、美国，留空则提取全部)'
+        required: false
+        default: ''
       ports_input:
         description: '需要扫描的端口号 (多个端口用逗号或空格隔开)'
         required: true
@@ -46,7 +50,7 @@ jobs:
           STAGE1_CONCURRENCY: ${{ github.event.inputs.concurrency_input }}
         run: |
           ulimit -n 65535
-          python check_cf_asn4.py "${{ github.event.inputs.target_input }}" "${{ github.event.inputs.ports_input }}"
+          python check_cf_asn4.py "${{ github.event.inputs.target_input }}" "${{ github.event.inputs.ports_input }}" "${{ github.event.inputs.region_input }}"
 
       - name: Commit and Push TXT Results
         uses: stefanzweifel/git-auto-commit-action@v5
