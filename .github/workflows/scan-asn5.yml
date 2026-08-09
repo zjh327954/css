@@ -1,4 +1,4 @@
-name: '定时扫描'
+name: '每天八点自动扫描 IP'
 
 on:
   schedule:
@@ -9,11 +9,11 @@ on:
       ports_input:
         description: '需要扫描的端口号 (多个端口用逗号或空格隔开)'
         required: true
-        default: '443, 8443, 2053, 2083, 287, 2096'
+        default: '443, 8443, 2053, 2083, 2087, 2096'
       concurrency_input:
         description: '单进程并发速率'
         required: true
-        default: '200'
+        default: '100'
 
 jobs:
   scan:
@@ -46,7 +46,7 @@ jobs:
         run: |
           ulimit -n 65535
           PORTS="${{ github.event.inputs.ports_input }}"
-          PORTS="${PORTS:-443, 8443, 2053, 2083, 287, 2096}"
+          PORTS="${PORTS:-443, 8443, 2053, 2083, 2087, 2096}"
           python "脚本/check_cf_asn5.py" "default" "$PORTS" "default"
 
       - name: Commit and Push TXT Results
