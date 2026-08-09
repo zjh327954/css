@@ -62,7 +62,6 @@ except ImportError:
 # ==================== 极限性能配置区域 ====================
 DEFAULT_TARGETS = os.getenv("TARGET_LIST", os.getenv("ASN_LIST", "AS36002"))
 DEFAULT_PORTS = "443, 8443, 2053, 2083, 2096"
-CUSTOM_CF_DOMAIN = os.getenv("CUSTOM_CF_DOMAIN", "327954.ccwu.cc")
 
 # 阶段 1：TLS 粗筛 (www.cloudflare.com)
 CF_SNI_1 = "www.cloudflare.com"
@@ -72,9 +71,6 @@ STAGE1_TIMEOUT = 2        # 超时收紧至 2s
 # 阶段 2：HTTP 验证 Host (crypto.cloudflare.com)
 CF_HOST_TEST = "crypto.cloudflare.com"
 STAGE2_TIMEOUT = 1.2
-
-# 阶段 3：自定义域名校验超时
-STAGE3_TIMEOUT = 1.2
 
 # CPU 核心数 (决定多进程并行数量)
 CPU_CORES = max(1, os.cpu_count() or 1)
@@ -165,7 +161,6 @@ def sample_one_ip_per_24(net):
     """
     sampled_ips = []
     if net.prefixlen <= 24:
-        # 将大网段拆分为若干个 /24 子网
         subnets_24 = list(net.subnets(new_prefix=24))
         for sub in subnets_24:
             hosts = list(sub.hosts())
@@ -174,7 +169,6 @@ def sample_one_ip_per_24(net):
             else:
                 sampled_ips.append(str(sub.network_address))
     else:
-        # 掩码大于 24 的细小网段直接抽 1 个 IP
         hosts = list(net.hosts())
         if hosts:
             sampled_ips.append(str(random.choice(hosts)))
@@ -237,7 +231,7 @@ def match_domain_in_cert(sni_domain, cert_str):
 
 
 async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
-    """阶段一/阶段三：异步 TLS 握手优化"""
+    """阶段一：异步 TLS 握手优化"""
     async with sem:
         writer = None
         try:
@@ -374,7 +368,7 @@ async def main():
     print(f"[*] 解析完成：共提取出 {len(all_ips)} 个代表 IP（涵盖 {len(all_ips)} 个 /24 网段） × {len(target_ports)} 个端口 = 共 {total_targets_count:,} 个测试目标。", flush=True)
 
     # ==================== 1. 多进程 TLS 粗筛 ====================
-    print(f"\n[1/3 第一阶段 TLS 探测] 多进程并行并发中...", flush=True)
+    print(f"\n[1/2 第一阶段 TLS 探测] 多进程并行并发中...", flush=True)
     
     num_chunks = CPU_CORES * 4
     chunk_size = max(1, total_targets_count // num_chunks)
@@ -409,7 +403,7 @@ async def main():
 
     # ==================== 2. HTTP 严格 301/302 校验 ====================
     sem = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
-    print(f"[2/3 第二阶段 HTTP 校验] 正在快速校验 {len(pass_1)} 个候选目标...", flush=True)
+    print(f"[2/2 第二阶段 HTTP 校验] 正在快速校验 {len(pass_1)} 个候选目标...", flush=True)
     tasks2 = [check_http_async(ip, port, CF_HOST_TEST, STAGE2_TIMEOUT, sem) for ip, port in pass_1]
     res2 = await asyncio.gather(*tasks2)
     pass_2 = [pass_1[i] for i, ok in enumerate(res2) if ok]
@@ -419,19 +413,8 @@ async def main():
         print("[-] 无有效 IP:端口 通过第二阶段。", flush=True)
         return
 
-    # ==================== 3. 自定义托管域名反代校验 ====================
-    final_items = pass_2
-    if CUSTOM_CF_DOMAIN and CUSTOM_CF_DOMAIN.strip():
-        domain = CUSTOM_CF_DOMAIN.strip()
-        print(f"[3/3 第三阶段自定义域名校验] 正在校验域名 {domain}...", flush=True)
-        tasks3 = [check_tls_sni_async(ip, port, domain, STAGE3_TIMEOUT, sem) for ip, port in pass_2]
-        res3 = await asyncio.gather(*tasks3)
-        final_items = [pass_2[i] for i, ok in enumerate(res3) if ok]
-        print(f"[+] 第三阶段完成！支持自定义托管域名的优选反代 IP: {len(final_items)} 个", flush=True)
-    else:
-        print("[3/3] 未检测到 CUSTOM_CF_DOMAIN，自动跳过第三阶段。", flush=True)
-
-    final_items = sorted(final_items, key=lambda x: (ipaddress.ip_address(x[0]), x[1]))
+    # 排序导出的最终结果
+    final_items = sorted(pass_2, key=lambda x: (ipaddress.ip_address(x[0]), x[1]))
 
     # ==================== 导出结果 ====================
     print("\n==================== 扫描结束 ====================", flush=True)
@@ -440,13 +423,13 @@ async def main():
     # 替换非法字符
     clean_input = re.sub(r'[^\w\.-]', '_', target_input.strip())
     
-    # 防止文件名超过 Linux 255 字节限制（输入多网段时自动截断）
+    # 防止文件名超过 Linux 255 字节限制
     if len(clean_input) > 30:
         filename = f"{clean_input[:30]}_batch.txt"
     else:
         filename = f"{clean_input}.txt"
 
-    # 自动定位仓库根目录（解决脚本放在 '脚本' 子目录下导致路径偏移的问题）
+    # 自动定位仓库根目录
     repo_root = BASE_DIR
     if os.path.exists(os.path.join(os.path.dirname(BASE_DIR), ".git")):
         repo_root = os.path.dirname(BASE_DIR)
