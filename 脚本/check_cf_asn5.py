@@ -31,7 +31,7 @@ except ImportError:
     UVLOOP_ENABLED = False
 
 # ==================== 配置区域 ====================
-DEFAULT_PORTS = "443, 8443, 2053, 2083, 2096"
+DEFAULT_PORTS = "443, 8443, 2053, 2083, 287, 2096"
 CUSTOM_CF_DOMAIN = os.getenv("CUSTOM_CF_DOMAIN", "")
 
 STAGE0_TIMEOUT = 0.8
@@ -393,7 +393,7 @@ def parse_structured_ip_data():
 
 def parse_ports(port_str):
     if not port_str:
-        return [443, 8443, 2053, 2083, 2096]
+        return [443, 8443, 2053, 2083, 287, 2096]
     ports = set()
     parts = re.split(r'[\s,]+', str(port_str).strip())
     for part in parts:
@@ -409,7 +409,7 @@ def parse_ports(port_str):
             val = int(part)
             if 1 <= val <= 65535:
                 ports.add(val)
-    return sorted(list(ports)) if ports else [443, 8443, 2053, 2083, 2096]
+    return sorted(list(ports)) if ports else [443, 8443, 2053, 2083, 287, 2096]
 
 async def check_tcp_open_async(ip, port, timeout_val, sem):
     async with sem:
@@ -596,7 +596,8 @@ async def main():
             unique_set.add(key)
             region_data[item["region"]][item["isp"]].append(f"{item['ip']}:{item['port']}")
 
-    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    # 锁死输出路径为仓库根目录
+    output_dir = os.getcwd()
 
     # 依次写入 日本.txt, 香港.txt, 新加坡.txt
     for reg in ["日本", "香港", "新加坡"]:
