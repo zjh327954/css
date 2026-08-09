@@ -1,0 +1,19 @@
+name: '定时清理 Actions 历史运行日志'
+
+on:
+  schedule:
+    # 每周一凌晨 00:00 (UTC) 自动运行清理
+    - cron: '0 0 * * 1'
+  workflow_dispatch: # 支持手动一键触发
+
+jobs:
+  del_runs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old workflow runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 3          # 只保留最近 3 天的运行日志（按天数）
+          keep_minimum_runs: 5    # 至少保留最近 5 次运行记录（防止全部被清空）
