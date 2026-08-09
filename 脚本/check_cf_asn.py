@@ -12,7 +12,7 @@ import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from functools import lru_cache
 
-# 获取当前脚本所在的绝对路径（仓库根目录）
+# 获取当前脚本所在的绝对路径
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ==================== 0. 自动优化系统内核与文件句柄限制 ====================
@@ -67,7 +67,7 @@ CUSTOM_CF_DOMAIN = os.getenv("CUSTOM_CF_DOMAIN", "327954.ccwu.cc")
 # 阶段 1：TLS 粗筛 (www.cloudflare.com)
 CF_SNI_1 = "www.cloudflare.com"
 STAGE1_CONCURRENCY = int(os.getenv("STAGE1_CONCURRENCY", "1500"))   # 单进程并发数
-STAGE1_TIMEOUT = 2        # 超时收紧至 0.8s
+STAGE1_TIMEOUT = 2        # 超时收紧至 2s
 
 # 阶段 2：HTTP 验证 Host (crypto.cloudflare.com)
 CF_HOST_TEST = "crypto.cloudflare.com"
@@ -120,8 +120,8 @@ def parse_ports(port_str):
 
 
 @lru_cache(maxsize=32)
-def get_ips_from_asn_sync(asn_clean):
-    """同步阻塞获取 ASN 的 IP 段 (带 lru_cache 避免重复查询)"""
+def get_cidrs_from_asn_sync(asn_clean):
+    """同步阻塞获取 ASN 的 IP 段 CIDR 列表 (带 lru_cache)"""
     import urllib.request
     cidrs = []
     
@@ -154,43 +154,64 @@ def get_ips_from_asn_sync(asn_clean):
         except Exception:
             pass
 
-    ip_list = []
-    for cidr in cidrs:
-        try:
-            net = ipaddress.ip_network(cidr, strict=False)
-            if net.prefixlen >= 31:
-                ip_list.extend([str(ip) for ip in net])
-            else:
-                ip_list.extend([str(ip) for ip in net.hosts()])
-        except Exception:
-            continue
+    return cidrs
 
-    return ip_list
+
+def sample_one_ip_per_24(net):
+    """
+    接收一个 ipaddress.IPv4Network 对象：
+    - 若网络掩码 <= 24 (比如 /16, /20, /24)，拆分成多个 /24 段，在每个 /24 段内随机抽取 1 个 IP；
+    - 若网络掩码 > 24 (比如 /25, /32)，直接随机抽取 1 个可用 IP。
+    """
+    sampled_ips = []
+    if net.prefixlen <= 24:
+        # 将大网段拆分为若干个 /24 子网
+        subnets_24 = list(net.subnets(new_prefix=24))
+        for sub in subnets_24:
+            hosts = list(sub.hosts())
+            if hosts:
+                sampled_ips.append(str(random.choice(hosts)))
+            else:
+                sampled_ips.append(str(sub.network_address))
+    else:
+        # 掩码大于 24 的细小网段直接抽 1 个 IP
+        hosts = list(net.hosts())
+        if hosts:
+            sampled_ips.append(str(random.choice(hosts)))
+        else:
+            sampled_ips.append(str(net.network_address))
+            
+    return sampled_ips
 
 
 async def parse_targets_async(input_str):
-    """在 asyncio 执行器中运行同步网络请求，避免阻塞 EventLoop"""
+    """解析输入，拆分为 /24 并在每个 /24 段内随机抽取 1 个 IP"""
     loop = asyncio.get_running_loop()
     raw_targets = [t.strip() for t in re.split(r'[\s,]+', input_str) if t.strip()]
-    all_ips = []
+    sampled_ips = []
 
     for item in raw_targets:
+        # 尝试作为 CIDR/单个 IP 解析
         try:
             net = ipaddress.ip_network(item, strict=False)
-            if net.prefixlen >= 31:
-                all_ips.extend([str(ip) for ip in net])
-            else:
-                all_ips.extend([str(ip) for ip in net.hosts()])
+            sampled_ips.extend(sample_one_ip_per_24(net))
             continue
         except ValueError:
             pass
 
+        # 尝试作为 ASN 解析
         asn_clean = item.upper().replace("AS", "")
         if asn_clean.isdigit():
-            ips = await loop.run_in_executor(None, get_ips_from_asn_sync, asn_clean)
-            all_ips.extend(ips)
+            cidrs = await loop.run_in_executor(None, get_cidrs_from_asn_sync, asn_clean)
+            for cidr in cidrs:
+                try:
+                    net = ipaddress.ip_network(cidr, strict=False)
+                    sampled_ips.extend(sample_one_ip_per_24(net))
+                except ValueError:
+                    continue
 
-    unique_ips = list(dict.fromkeys(all_ips))
+    # 去重并打乱顺序
+    unique_ips = list(dict.fromkeys(sampled_ips))
     random.shuffle(unique_ips)
     return unique_ips
 
@@ -338,7 +359,7 @@ async def main():
 
     target_ports = parse_ports(ports_input)
     
-    print(f"\n[*] 正在解析目标地址/ASN: {target_input} ...", flush=True)
+    print(f"\n[*] 正在解析目标地址/ASN: {target_input} (提取规则: 每个 /24 段仅抽选 1 个 IP) ...", flush=True)
     all_ips = await parse_targets_async(target_input)
 
     if not all_ips:
@@ -350,7 +371,7 @@ async def main():
     
     total_concurrency = STAGE1_CONCURRENCY * CPU_CORES
     print(f"[*] 引擎初始化：uvloop={UVLOOP_ENABLED} | 进程数={CPU_CORES} | 单进程并发={STAGE1_CONCURRENCY} | 总并发数={total_concurrency}", flush=True)
-    print(f"[*] 解析完成：{len(all_ips)} 个 IP × {len(target_ports)} 个端口 = 共 {total_targets_count:,} 个测试目标。", flush=True)
+    print(f"[*] 解析完成：共提取出 {len(all_ips)} 个代表 IP（涵盖 {len(all_ips)} 个 /24 网段） × {len(target_ports)} 个端口 = 共 {total_targets_count:,} 个测试目标。", flush=True)
 
     # ==================== 1. 多进程 TLS 粗筛 ====================
     print(f"\n[1/3 第一阶段 TLS 探测] 多进程并行并发中...", flush=True)
@@ -425,8 +446,15 @@ async def main():
     else:
         filename = f"{clean_input}.txt"
 
-    # 指定输出保存路径为 '优选反代ip' 目录
-    output_dir = os.path.join(BASE_DIR, "优选反代ip")
+    # 自动定位仓库根目录（解决脚本放在 '脚本' 子目录下导致路径偏移的问题）
+    repo_root = BASE_DIR
+    if os.path.exists(os.path.join(os.path.dirname(BASE_DIR), ".git")):
+        repo_root = os.path.dirname(BASE_DIR)
+    elif os.path.basename(BASE_DIR) == "脚本":
+        repo_root = os.path.dirname(BASE_DIR)
+
+    # 指定输出保存路径为仓库根目录下的 '优选反代ip'
+    output_dir = os.path.join(repo_root, "优选反代ip")
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, filename)
 
