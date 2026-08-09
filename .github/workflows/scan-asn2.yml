@@ -1,4 +1,4 @@
-name: '标准'
+name: '改证书'
 
 on:
   workflow_dispatch:
