@@ -1,4 +1,4 @@
-name: '自动扫描'
+name: '每天八点自动扫描 IP'
 
 on:
   schedule:
@@ -13,7 +13,7 @@ on:
       concurrency_input:
         description: '单进程并发速率'
         required: true
-        default: '100'
+        default: '200'
 
 jobs:
   scan:
@@ -45,19 +45,23 @@ jobs:
           STAGE1_CONCURRENCY: ${{ github.event.inputs.concurrency_input || '100' }}
         run: |
           ulimit -n 65535
-          # 提取端口参数，为空时使用指定的 6 个默认端口
           PORTS="${{ github.event.inputs.ports_input }}"
           PORTS="${PORTS:-443, 8443, 2053, 2083, 287, 2096}"
-          
-          # 传参：$1=任意占位字符串, $2=端口字符串, $3=任意占位字符串
-          python "脚本/check_cf_asn4.py" "default" "$PORTS" "default"
+          python "脚本/check_cf_asn5.py" "default" "$PORTS" "default"
 
       - name: Commit and Push TXT Results
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git pull origin main --rebase --autostash
           
-          # 强制包含根目录下的三个生成文件
-          git add "日本.txt" "香港.txt" "新加坡.txt"
-          git diff --staged --quiet || (git commit -m "Update scanned Asia TXT files [skip ci]" && git push)
+          # 暂存仓库根目录下的三个生成文件
+          git add ./日本.txt ./香港.txt ./新加坡.txt || true
+          
+          # 仅在有内容变更时触发提交与推送
+          if ! git diff --staged --quiet; then
+            git pull origin main --rebase --autostash
+            git commit -m "Update scanned Asia TXT files [skip ci]"
+            git push
+          else
+            echo "未检测到文本节点变动，跳过提交。"
+          fi
