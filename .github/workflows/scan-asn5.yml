@@ -13,7 +13,7 @@ on:
       concurrency_input:
         description: '单进程并发速率'
         required: true
-        default: '100'
+        default: '200'
 
 jobs:
   scan:
@@ -42,7 +42,7 @@ jobs:
       - name: Run Scan Script
         env:
           CUSTOM_CF_DOMAIN: ${{ secrets.CUSTOM_CF_DOMAIN }}
-          STAGE1_CONCURRENCY: ${{ github.event.inputs.concurrency_input || '100' }}
+          STAGE1_CONCURRENCY: ${{ github.event.inputs.concurrency_input || '200' }}
         run: |
           ulimit -n 65535
           PORTS="${{ github.event.inputs.ports_input }}"
