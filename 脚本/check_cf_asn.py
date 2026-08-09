@@ -9,21 +9,11 @@ import ipaddress
 import random
 import socket
 import multiprocessing
-import logging
 from concurrent.futures import ProcessPoolExecutor
 from functools import lru_cache
 
-# 静默 uvloop / asyncio 底层 SSL 连接断开刷屏报错
-logging.getLogger("asyncio").setLevel(logging.CRITICAL)
-
-# 获取当前脚本所在的绝对路径
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# 智能判断并定位仓库根目录（如果当前在 '脚本' 目录下，则退回上一级目录）
-if os.path.basename(CURRENT_DIR) == "脚本":
-    BASE_DIR = os.path.dirname(CURRENT_DIR)
-else:
-    BASE_DIR = CURRENT_DIR
+# 获取当前脚本所在的绝对路径（仓库根目录）
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ==================== 0. 自动优化系统内核与文件句柄限制 ====================
 def optimize_system_limits():
@@ -76,11 +66,10 @@ CUSTOM_CF_DOMAIN = os.getenv("CUSTOM_CF_DOMAIN", "327954.ccwu.cc")
 
 # 阶段 1：TLS 粗筛 (www.cloudflare.com)
 CF_SNI_1 = "www.cloudflare.com"
-STAGE1_CONCURRENCY = int(os.getenv("STAGE1_CONCURRENCY", "1500"))   # 单进程并发数（第一阶段）
-STAGE1_TIMEOUT = 2        # 超时时间
+STAGE1_CONCURRENCY = int(os.getenv("STAGE1_CONCURRENCY", "1500"))   # 单进程并发数
+STAGE1_TIMEOUT = 2        # 超时收紧至 0.8s
 
-# 阶段 2：HTTP 验证并发数（固定为 200 并发）
-STAGE2_CONCURRENCY = 200
+# 阶段 2：HTTP 验证 Host (crypto.cloudflare.com)
 CF_HOST_TEST = "crypto.cloudflare.com"
 STAGE2_TIMEOUT = 1.2
 
@@ -360,7 +349,7 @@ async def main():
     total_targets_count = len(targets)
     
     total_concurrency = STAGE1_CONCURRENCY * CPU_CORES
-    print(f"[*] 引擎初始化：uvloop={UVLOOP_ENABLED} | 进程数={CPU_CORES} | 第一阶段并发={total_concurrency} | 第二阶段速率={STAGE2_CONCURRENCY}", flush=True)
+    print(f"[*] 引擎初始化：uvloop={UVLOOP_ENABLED} | 进程数={CPU_CORES} | 单进程并发={STAGE1_CONCURRENCY} | 总并发数={total_concurrency}", flush=True)
     print(f"[*] 解析完成：{len(all_ips)} 个 IP × {len(target_ports)} 个端口 = 共 {total_targets_count:,} 个测试目标。", flush=True)
 
     # ==================== 1. 多进程 TLS 粗筛 ====================
@@ -398,9 +387,9 @@ async def main():
         return
 
     # ==================== 2. HTTP 严格 301/302 校验 ====================
-    sem_stage2 = asyncio.Semaphore(STAGE2_CONCURRENCY)
-    print(f"[2/3 第二阶段 HTTP 校验] 正在以 {STAGE2_CONCURRENCY} 并发平滑校验 {len(pass_1)} 个候选目标...", flush=True)
-    tasks2 = [check_http_async(ip, port, CF_HOST_TEST, STAGE2_TIMEOUT, sem_stage2) for ip, port in pass_1]
+    sem = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
+    print(f"[2/3 第二阶段 HTTP 校验] 正在快速校验 {len(pass_1)} 个候选目标...", flush=True)
+    tasks2 = [check_http_async(ip, port, CF_HOST_TEST, STAGE2_TIMEOUT, sem) for ip, port in pass_1]
     res2 = await asyncio.gather(*tasks2)
     pass_2 = [pass_1[i] for i, ok in enumerate(res2) if ok]
     print(f"[+] 第二阶段完成！可用 301 重定向目标: {len(pass_2)} 个\n", flush=True)
@@ -413,8 +402,8 @@ async def main():
     final_items = pass_2
     if CUSTOM_CF_DOMAIN and CUSTOM_CF_DOMAIN.strip():
         domain = CUSTOM_CF_DOMAIN.strip()
-        print(f"[3/3 第三阶段自定义域名校验] 正在以 {STAGE2_CONCURRENCY} 并发校验域名 {domain}...", flush=True)
-        tasks3 = [check_tls_sni_async(ip, port, domain, STAGE3_TIMEOUT, sem_stage2) for ip, port in pass_2]
+        print(f"[3/3 第三阶段自定义域名校验] 正在校验域名 {domain}...", flush=True)
+        tasks3 = [check_tls_sni_async(ip, port, domain, STAGE3_TIMEOUT, sem) for ip, port in pass_2]
         res3 = await asyncio.gather(*tasks3)
         final_items = [pass_2[i] for i, ok in enumerate(res3) if ok]
         print(f"[+] 第三阶段完成！支持自定义托管域名的优选反代 IP: {len(final_items)} 个", flush=True)
@@ -430,13 +419,13 @@ async def main():
     # 替换非法字符
     clean_input = re.sub(r'[^\w\.-]', '_', target_input.strip())
     
-    # 防止文件名超过 Linux 255 字节限制
+    # 防止文件名超过 Linux 255 字节限制（输入多网段时自动截断）
     if len(clean_input) > 30:
         filename = f"{clean_input[:30]}_batch.txt"
     else:
         filename = f"{clean_input}.txt"
 
-    # 指定输出保存路径为仓库根目录下的 '优选反代ip' 目录
+    # 指定输出保存路径为 '优选反代ip' 目录
     output_dir = os.path.join(BASE_DIR, "优选反代ip")
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, filename)
