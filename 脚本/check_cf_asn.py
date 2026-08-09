@@ -1,4 +1,4 @@
-import asyncio
+Import asyncio
 import ssl
 import sys
 import os
@@ -12,7 +12,7 @@ import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from functools import lru_cache
 
-# 获取当前脚本所在的绝对路径
+# 获取当前脚本所在的绝对路径（仓库根目录）
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ==================== 0. 自动优化系统内核与文件句柄限制 ====================
@@ -425,15 +425,8 @@ async def main():
     else:
         filename = f"{clean_input}.txt"
 
-    # 自动定位仓库根目录（解决脚本放在 '脚本' 子目录下导致路径偏移的问题）
-    repo_root = BASE_DIR
-    if os.path.exists(os.path.join(os.path.dirname(BASE_DIR), ".git")):
-        repo_root = os.path.dirname(BASE_DIR)
-    elif os.path.basename(BASE_DIR) == "脚本":
-        repo_root = os.path.dirname(BASE_DIR)
-
-    # 指定输出保存路径为仓库根目录下的 '优选反代ip'
-    output_dir = os.path.join(repo_root, "优选反代ip")
+    # 指定输出保存路径为 '优选反代ip' 目录
+    output_dir = os.path.join(BASE_DIR, "优选反代ip")
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, filename)
 
