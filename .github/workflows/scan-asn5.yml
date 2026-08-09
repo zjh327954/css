@@ -1,0 +1,68 @@
+name: '每日扫描'
+
+on:
+  # 1. 每日定时任务：UTC 0:00 对应北京时间 08:00
+  schedule:
+    - cron: '0 0 * * *'
+
+  # 2. 手动触发配置
+  workflow_dispatch:
+    inputs:
+      target_input:
+        description: '扫描目标 (支持 ASN 如 AS36002、IP段如 203.66.11.0/20)'
+        required: true
+        default: 'AS36002'
+      region_input:
+        description: '筛选国家或地区名称/代号 (如 香港、hk、美国，留空则提取全部)'
+        required: false
+        default: ''
+      ports_input:
+        description: '需要扫描的端口号 (多个端口用逗号或空格隔开)'
+        required: true
+        default: '443 8443 2053 2083 2087 2096'
+      concurrency_input:
+        description: '单进程并发速率 (如 1000/1500/2000)'
+        required: true
+        default: '1000'
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install cryptography uvloop aiohttp
+
+      # ---------------- 统一运行 check_cf_asn5.py ----------------
+      # 如果是 schedule 触发，github.event.inputs 会自动回退为空，
+      # 命令行参数就会传入空值，脚本内部会自动使用你的默认配置运行。
+      - name: Run ASN / IP Scan
+        env:
+          CUSTOM_CF_DOMAIN: ${{ secrets.CUSTOM_CF_DOMAIN }}
+          STAGE1_CONCURRENCY: ${{ inputs.concurrency_input || '1000' }}
+        run: |
+          ulimit -n 65535
+          python "脚本/check_cf_asn5.py" "${{ inputs.target_input || 'AS36002' }}" "${{ inputs.ports_input || '443 8443 2053 2083 2087 2096' }}" "${{ inputs.region_input || '' }}"
+
+      # ---------------- 自动提交结果 ----------------
+      - name: Commit and Push Results
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "auto: 更新扫描结果 [skip ci]"
+          file_pattern: "**/*.txt"
