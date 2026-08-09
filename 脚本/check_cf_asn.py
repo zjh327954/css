@@ -63,14 +63,10 @@ except ImportError:
 DEFAULT_TARGETS = os.getenv("TARGET_LIST", os.getenv("ASN_LIST", "AS36002"))
 DEFAULT_PORTS = "443, 8443, 2053, 2083, 2096"
 
-# 阶段 1：TLS 粗筛 (www.cloudflare.com)
-CF_SNI_1 = "www.cloudflare.com"
+# SNI 仅用于 TLS 握手协商
+CF_SNI = "www.cloudflare.com"
 STAGE1_CONCURRENCY = int(os.getenv("STAGE1_CONCURRENCY", "1500"))   # 单进程并发数
-STAGE1_TIMEOUT = 2        # 超时收紧至 2s
-
-# 阶段 2：HTTP 验证 Host (crypto.cloudflare.com)
-CF_HOST_TEST = "crypto.cloudflare.com"
-STAGE2_TIMEOUT = 1.2
+STAGE1_TIMEOUT = 2        # TLS 握手超时 2s
 
 # CPU 核心数 (决定多进程并行数量)
 CPU_CORES = max(1, os.cpu_count() or 1)
@@ -210,28 +206,8 @@ async def parse_targets_async(input_str):
     return unique_ips
 
 
-def match_domain_in_cert(sni_domain, cert_str):
-    sni_domain = sni_domain.lower()
-    cert_str = cert_str.lower()
-    
-    if sni_domain in cert_str:
-        return True
-        
-    parts = sni_domain.split(".")
-    if len(parts) >= 2:
-        main_domain = ".".join(parts[-2:])
-        wildcard_domain = f"*.{main_domain}"
-        if main_domain in cert_str or wildcard_domain in cert_str:
-            return True
-            
-    if "cloudflare" in sni_domain and "cloudflare" in cert_str:
-        return True
-
-    return False
-
-
-async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
-    """阶段一：异步 TLS 握手优化"""
+async def check_has_cert_async(ip, port, sni, timeout_val, sem):
+    """仅检测目标端口是否能正常完成 TLS 握手并返回证书"""
     async with sem:
         writer = None
         try:
@@ -247,45 +223,8 @@ async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
                 return False
 
             der_cert = ssl_obj.getpeercert(binary_form=True)
-            if not der_cert:
-                return False
-            
-            cert_str = der_cert.decode('latin1', errors='ignore').lower()
-            return match_domain_in_cert(sni, cert_str)
-        except Exception:
-            return False
-        finally:
-            if writer:
-                writer.close()
-                try:
-                    writer.transport.abort()
-                except Exception:
-                    pass
-
-
-async def check_http_async(ip, port, host, timeout_val, sem):
-    """阶段二：校验 HTTP 301/302 重定向"""
-    async with sem:
-        writer = None
-        try:
-            conn = asyncio.open_connection(ip, port, ssl=SSL_CTX, server_hostname=host)
-            reader, writer = await asyncio.wait_for(conn, timeout=timeout_val)
-            
-            sock = writer.get_extra_info('socket')
-            if sock:
-                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-
-            req = f"GET / HTTP/1.1\r\nHost: {host}\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n"
-            writer.write(req.encode('latin1'))
-            await writer.drain()
-
-            data = await asyncio.wait_for(reader.read(512), timeout=timeout_val)
-
-            if not data:
-                return False
-
-            resp_str = data.decode('latin1', errors='ignore').lower()
-            return ("http/1.1 301" in resp_str or "http/1.1 302" in resp_str) and ("location:" in resp_str)
+            # 只要成功返回证书（二进制内容不为空）即判定有效
+            return bool(der_cert)
         except Exception:
             return False
         finally:
@@ -318,7 +257,7 @@ def _process_worker_stage1(targets_chunk):
         sem = asyncio.Semaphore(STAGE1_CONCURRENCY)
 
         async def worker(ip, port):
-            res = await check_tls_sni_async(ip, port, CF_SNI_1, STAGE1_TIMEOUT, sem)
+            res = await check_has_cert_async(ip, port, CF_SNI, STAGE1_TIMEOUT, sem)
             
             # 使用原子锁更新全局共享计数器
             with global_lock:
@@ -336,7 +275,7 @@ def _process_worker_stage1(targets_chunk):
                     if global_printed_milestones[milestone_idx - 1] == 0:
                         global_printed_milestones[milestone_idx - 1] = 1
                         pct = min(100, milestone_idx * 10)
-                        print(f"  [第一阶段全局进度] {pct}% ({curr:,}/{global_total:,}) | 已通过: {passed:,} 个", flush=True)
+                        print(f"  [检测进度] {pct}% ({curr:,}/{global_total:,}) | 含有证书 IP: {passed:,} 个", flush=True)
 
             return res
 
@@ -367,8 +306,8 @@ async def main():
     print(f"[*] 引擎初始化：uvloop={UVLOOP_ENABLED} | 进程数={CPU_CORES} | 单进程并发={STAGE1_CONCURRENCY} | 总并发数={total_concurrency}", flush=True)
     print(f"[*] 解析完成：共提取出 {len(all_ips)} 个代表 IP（涵盖 {len(all_ips)} 个 /24 网段） × {len(target_ports)} 个端口 = 共 {total_targets_count:,} 个测试目标。", flush=True)
 
-    # ==================== 1. 多进程 TLS 粗筛 ====================
-    print(f"\n[1/2 第一阶段 TLS 探测] 多进程并行并发中...", flush=True)
+    # ==================== TLS 证书探测 ====================
+    print(f"\n[*] 正在检测 TLS 证书握手...", flush=True)
     
     num_chunks = CPU_CORES * 4
     chunk_size = max(1, total_targets_count // num_chunks)
@@ -381,7 +320,7 @@ async def main():
     lock = manager.Lock()
     printed_array = manager.Array('i', [0] * 10) # 记录 10% ~ 100% 打印标记位
 
-    pass_1 = []
+    passed_targets = []
     loop = asyncio.get_running_loop()
     
     # 传入 initializer 将共享锁与共享变量注入各个子进程
@@ -393,32 +332,20 @@ async def main():
         futures = [loop.run_in_executor(executor, _process_worker_stage1, chunk) for chunk in chunks]
         results = await asyncio.gather(*futures)
         for res in results:
-            pass_1.extend(res)
+            passed_targets.extend(res)
 
-    print(f"[+] 第一阶段完成！匹配 CF 证书保留目标: {len(pass_1)} 个\n", flush=True)
+    print(f"[+] TLS 证书检测完成！成功返回证书的目标: {len(passed_targets)} 个\n", flush=True)
 
-    if not pass_1:
-        print("[-] 无有效 IP:端口 通过第一阶段。", flush=True)
-        return
-
-    # ==================== 2. HTTP 严格 301/302 校验 ====================
-    sem = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
-    print(f"[2/2 第二阶段 HTTP 校验] 正在快速校验 {len(pass_1)} 个候选目标...", flush=True)
-    tasks2 = [check_http_async(ip, port, CF_HOST_TEST, STAGE2_TIMEOUT, sem) for ip, port in pass_1]
-    res2 = await asyncio.gather(*tasks2)
-    pass_2 = [pass_1[i] for i, ok in enumerate(res2) if ok]
-    print(f"[+] 第二阶段完成！可用 301 重定向目标: {len(pass_2)} 个\n", flush=True)
-
-    if not pass_2:
-        print("[-] 无有效 IP:端口 通过第二阶段。", flush=True)
+    if not passed_targets:
+        print("[-] 未检测到任何支持 TLS 证书的 IP:端口。", flush=True)
         return
 
     # 排序导出的最终结果
-    final_items = sorted(pass_2, key=lambda x: (ipaddress.ip_address(x[0]), x[1]))
+    final_items = sorted(passed_targets, key=lambda x: (ipaddress.ip_address(x[0]), x[1]))
 
     # ==================== 导出结果 ====================
-    print("\n==================== 扫描结束 ====================", flush=True)
-    print(f"最终有效目标总数: {len(final_items)}", flush=True)
+    print("==================== 扫描结束 ====================", flush=True)
+    print(f"含有证书的有效目标总数: {len(final_items)}", flush=True)
 
     # 替换非法字符
     clean_input = re.sub(r'[^\w\.-]', '_', target_input.strip())
