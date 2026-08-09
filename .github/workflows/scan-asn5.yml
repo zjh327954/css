@@ -5,7 +5,7 @@ on:
   schedule:
     - cron: '0 0 * * *'
 
-  # 2. 手动触发配置（仅保留端口与并发两个输入项）
+  # 2. 手动触发配置
   workflow_dispatch:
     inputs:
       ports_input:
@@ -44,11 +44,13 @@ jobs:
       - name: Run ASN / IP Scan
         env:
           CUSTOM_CF_DOMAIN: ${{ secrets.CUSTOM_CF_DOMAIN }}
-          STAGE1_CONCURRENCY: ${{ inputs.concurrency_input || '1000' }}
+          STAGE1_CONCURRENCY: ${{ inputs.concurrency_input || '100' }}
         run: |
           ulimit -n 65535
-          # 第 1 参数与第 3 参数传空字符串 ""，触发 check_cf_asn5.py 自动读取文件夹下所有 txt
-          python "脚本/check_cf_asn5.py" "" "${{ inputs.ports_input || '443 8443 2053 2083 2087 2096' }}" ""
+          # 已经同步修改为 check_cf_asn5.py
+          # 如果脚本在根目录：python "check_cf_asn5.py" ...
+          # 如果脚本在 "脚本" 文件夹内：python "脚本/check_cf_asn5.py" ...
+          python "脚本/check_cf_asn5.py" "${{ inputs.ports_input || '443 8443 2053 2083 2087 2096' }}"
 
       - name: Commit and Push Results
         uses: stefanzweifel/git-auto-commit-action@v5
