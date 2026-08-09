@@ -206,8 +206,8 @@ async def main():
     total_targets_cnt = len(targets)
     print(f"[*] 解析完成：{unique_ips_cnt:,} 个 IP × {len(ports)} 个端口 = 共 {total_targets_cnt:,} 个测试目标。", flush=True)
 
-    # ---------------- 阶段 0: TCP 探活 (按 50,000 分批 + 全局 10% 进度) ----------------
-    print(f"\n[0/3 阶段 0] TCP 极速探活 (目标总数: {total_targets_cnt:,})...", flush=True)
+    # ---------------- 阶段 0: TCP 探活 ----------------
+    print(f"\n[0/3 阶段 0 TCP 探活] 多进程并行并发中...", flush=True)
     
     CHUNK_SIZE = 50000
     pass_0 = []
@@ -221,28 +221,30 @@ async def main():
         nonlocal global_completed_0, next_report_0
         async with sem_0:
             res = await check_tcp_open_async(item)
+            if res:
+                pass_0.append(item)
             global_completed_0 += 1
             current_pct = (global_completed_0 / total_targets_cnt) * 100
+            
             if current_pct >= next_report_0 or global_completed_0 == total_targets_cnt:
-                print(f"    [阶段 0] 总进度: {global_completed_0:,}/{total_targets_cnt:,} ({int(current_pct)}%)", flush=True)
+                print(f"    [阶段 0 全局进度] {int(current_pct)}% ({global_completed_0:,}/{total_targets_cnt:,}) | 已通过: {len(pass_0):,} 个", flush=True)
                 while next_report_0 <= current_pct and next_report_0 < 100:
                     next_report_0 += 10
             return res
 
     for chunk in target_chunks:
         tasks = [worker_0(item) for item in chunk]
-        res_chunk = await asyncio.gather(*tasks)
-        passed = [chunk[i] for i, ok in enumerate(res_chunk) if ok]
-        pass_0.extend(passed)
+        await asyncio.gather(*tasks)
 
-    print(f"[+] 阶段 0 结束，端口开放总数: {len(pass_0):,}", flush=True)
+    print(f"[+] 阶段 0 完成！开放端口保留目标: {len(pass_0):,} 个", flush=True)
 
     if not pass_0: return
 
-    # ---------------- 阶段 1: TLS 校验 (全局 10% 进度) ----------------
-    print(f"\n[1/3 阶段 1] TLS 证书匹配 (目标数: {len(pass_0):,})...", flush=True)
+    # ---------------- 阶段 1: TLS 校验 ----------------
+    print(f"\n[1/3 阶段 1 TLS 探测] 多进程并行并发中...", flush=True)
     
     total_1 = len(pass_0)
+    pass_1 = []
     global_completed_1 = 0
     next_report_1 = 10
     sem_1 = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
@@ -251,39 +253,42 @@ async def main():
         nonlocal global_completed_1, next_report_1
         async with sem_1:
             res = await check_tls_sni_1(item)
+            if res:
+                pass_1.append(item)
             global_completed_1 += 1
             current_pct = (global_completed_1 / total_1) * 100
+            
             if current_pct >= next_report_1 or global_completed_1 == total_1:
-                print(f"    [阶段 1] 总进度: {global_completed_1:,}/{total_1:,} ({int(current_pct)}%)", flush=True)
+                print(f"    [阶段 1 全局进度] {int(current_pct)}% ({global_completed_1:,}/{total_1:,}) | 已通过: {len(pass_1):,} 个", flush=True)
                 while next_report_1 <= current_pct and next_report_1 < 100:
                     next_report_1 += 10
             return res
 
     tasks1 = [worker_1(item) for item in pass_0]
-    res1 = await asyncio.gather(*tasks1)
-    pass_1 = [pass_0[i] for i, ok in enumerate(res1) if ok]
-    print(f"[+] 阶段 1 结束，TLS 校验通过数: {len(pass_1):,}", flush=True)
+    await asyncio.gather(*tasks1)
+
+    print(f"[+] 阶段 1 完成！匹配 CF 证书保留目标: {len(pass_1):,} 个", flush=True)
 
     if not pass_1: return
 
-    # ---------------- 阶段 2: HTTP 校验 (不打印中间日志) ----------------
-    print(f"\n[2/3 阶段 2] HTTP 重定向校验...", flush=True)
+    # ---------------- 阶段 2: HTTP 校验 ----------------
+    print(f"\n[2/3 阶段 2 HTTP 重定向校验] 快速验证中...", flush=True)
     sem_fast = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
     tasks2 = [check_http_async(item, sem_fast) for item in pass_1]
     res2 = await asyncio.gather(*tasks2)
     pass_2 = [pass_1[i] for i, ok in enumerate(res2) if ok]
-    print(f"[+] 阶段 2 结束，HTTP 校验通过数: {len(pass_2):,}", flush=True)
+    print(f"[+] 阶段 2 完成！HTTP 重定向通过数: {len(pass_2):,} 个", flush=True)
 
     if not pass_2: return
 
-    # ---------------- 阶段 3: 自定义域名校验 (不打印中间日志) ----------------
+    # ---------------- 阶段 3: 自定义域名校验 ----------------
     final_items = pass_2
     if CUSTOM_CF_DOMAIN:
-        print(f"\n[3/3 阶段 3] 自定义域名校验 ({CUSTOM_CF_DOMAIN})...", flush=True)
+        print(f"\n[3/3 阶段 3 自定义域名校验] ({CUSTOM_CF_DOMAIN})...", flush=True)
         tasks3 = [check_tls_custom_domain(item, sem_fast) for item in pass_2]
         res3 = await asyncio.gather(*tasks3)
         final_items = [pass_2[i] for i, ok in enumerate(res3) if ok]
-        print(f"[+] 阶段 3 结束，最终有效数: {len(final_items):,}", flush=True)
+        print(f"[+] 阶段 3 完成！最终保留目标: {len(final_items):,} 个", flush=True)
 
     # ---------------- 分类保存 ----------------
     output_dir = os.path.join(BASE_DIR, "自用")
