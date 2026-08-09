@@ -23,7 +23,7 @@ on:
       concurrency_input:
         description: '单进程并发速率 (如 1000/1500/2000)'
         required: true
-        default: '1000'
+        default: '100'
 
 jobs:
   scan:
