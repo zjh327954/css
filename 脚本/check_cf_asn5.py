@@ -14,12 +14,31 @@ from collections import defaultdict
 
 # ==================== 0. 自动优化系统内核与文件句柄限制 ====================
 def optimize_system_limits():
+    """自动化调优系统文件句柄限制 (ulimit) 与内核网络参数 (sysctl)"""
+    print("[*] 正在尝试优化系统内核与文件描述符限制...", flush=True)
     try:
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         target_limit = max(65535, hard)
         resource.setrlimit(resource.RLIMIT_NOFILE, (target_limit, target_limit))
-    except Exception:
-        pass
+        new_soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+        print(f"[+] 文件描述符上限 (ulimit) 调整成功: {new_soft}", flush=True)
+    except Exception as e:
+        print(f"[-] 调整 ulimit 失败: {e}", flush=True)
+
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        sysctl_settings = {
+            "/proc/sys/net/core/somaxconn": "65535",
+            "/proc/sys/net/ipv4/tcp_tw_reuse": "1",
+            "/proc/sys/net/ipv4/ip_local_port_range": "1024 65535",
+        }
+        for path, value in sysctl_settings.items():
+            try:
+                with open(path, "w") as f:
+                    f.write(value)
+            except Exception:
+                pass
+    else:
+        print("[!] 提示: 当前非 Root 用户，跳过 sysctl 内核参数优化 (若在 GitHub Actions 中默认是 Root)", flush=True)
 
 optimize_system_limits()
 
@@ -353,10 +372,8 @@ AS400618  — 亚洲 IP 小计: 10,240
 """
 
 def parse_structured_ip_data():
-    """解析内置的大文本，提取日本、香港、新加坡的 IP，并标注 ISP 和 地区"""
     target_regions = ["日本", "香港", "新加坡"]
     ip_records = []
-    
     current_isp = ""
     current_region = ""
     
@@ -518,7 +535,7 @@ async def main():
         print("[-] 未能解析出任何符合条件的 IP，程序退出。", flush=True)
         return
 
-    # 构建探测列表
+    # 构建全局测试列表
     targets = []
     for item in all_ip_records:
         for port in target_ports:
@@ -530,24 +547,41 @@ async def main():
             })
 
     total_targets_count = len(targets)
-    print(f"[*] 解析完毕: 获得 {len(all_ip_records)} 个 IP × {len(target_ports)} 个端口 = {total_targets_count:,} 个待测节点。", flush=True)
+    total_concurrency = STAGE1_CONCURRENCY * CPU_CORES
+    print(f"[*] 引擎初始化: uvloop={UVLOOP_ENABLED} | 进程数={CPU_CORES} | 单进程并发={STAGE1_CONCURRENCY} | 总并发数={total_concurrency}", flush=True)
+    print(f"[*] 解析完成: {len(all_ip_records)} 个 IP × {len(target_ports)} 个端口 = 共 {total_targets_count:,} 个测试目标。", flush=True)
 
-    # 阶段 0: TCP 探活
-    sem_tcp = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
-    print(f"\n[0/3] TCP 极速探测中...", flush=True)
-    tasks0 = [check_tcp_open_async(item["ip"], item["port"], STAGE0_TIMEOUT, sem_tcp) for item in targets]
-    res0 = await asyncio.gather(*tasks0)
-    pass_0 = [targets[i] for i, ok in enumerate(res0) if ok]
+    # ==================== 0. TCP 极速分批探活 (防御 OOM 崩溃) ====================
+    sem_tcp = asyncio.Semaphore(total_concurrency)
+    print(f"\n[0/3] TCP 极速分批探测中...", flush=True)
+
+    pass_0 = []
+    chunk_size = 20000  # 每次仅投递 20,000 个任务到内存，防止 GitHub Actions OOM 报错
+
+    for i in range(0, total_targets_count, chunk_size):
+        chunk = targets[i:i + chunk_size]
+        tasks0 = [check_tcp_open_async(item["ip"], item["port"], STAGE0_TIMEOUT, sem_tcp) for item in chunk]
+        res0 = await asyncio.gather(*tasks0)
+        
+        for idx, ok in enumerate(res0):
+            if ok:
+                pass_0.append(chunk[idx])
+                
+        completed = min(i + chunk_size, total_targets_count)
+        pct = int(completed / total_targets_count * 100)
+        print(f"  [TCP 探测进度] {pct}% ({completed:,}/{total_targets_count:,}) | 当前存活: {len(pass_0):,} 个", flush=True)
+
     print(f"[+] TCP 开放节点: {len(pass_0):,} 个", flush=True)
 
     if not pass_0:
+        print("[-] 无任何开放节点，退出。", flush=True)
         return
 
-    # 阶段 1: 多进程 TLS 过滤
-    print(f"\n[1/3] TLS 证书匹配中...", flush=True)
+    # ==================== 1. 多进程 TLS 过滤 ====================
+    print(f"\n[1/3] TLS 证书匹配中 (待测目标: {len(pass_0):,} 个)...", flush=True)
     num_chunks = CPU_CORES * 4
-    chunk_size = max(1, len(pass_0) // num_chunks)
-    chunks = [pass_0[i:i + chunk_size] for i in range(0, len(pass_0), chunk_size)]
+    chunk_size_stage1 = max(1, len(pass_0) // num_chunks)
+    chunks = [pass_0[i:i + chunk_size_stage1] for i in range(0, len(pass_0), chunk_size_stage1)]
 
     pass_1 = []
     loop = asyncio.get_running_loop()
@@ -559,17 +593,18 @@ async def main():
 
     print(f"[+] TLS 匹配保留: {len(pass_1):,} 个", flush=True)
     if not pass_1:
+        print("[-] 无有效 IP 通过第一阶段。", flush=True)
         return
 
-    # 阶段 2: HTTP 校验
-    sem = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
+    # ==================== 2. HTTP 校验 ====================
+    sem = asyncio.Semaphore(total_concurrency)
     print(f"\n[2/3] HTTP 重定向校验中...", flush=True)
     tasks2 = [check_http_async(item["ip"], item["port"], CF_HOST_TEST, STAGE2_TIMEOUT, sem) for item in pass_1]
     res2 = await asyncio.gather(*tasks2)
     pass_2 = [pass_1[i] for i, ok in enumerate(res2) if ok]
     print(f"[+] HTTP 301/302 通过: {len(pass_2):,} 个", flush=True)
 
-    # 阶段 3: 自定义域名校验
+    # ==================== 3. 自定义域名校验 ====================
     final_items = pass_2
     if CUSTOM_CF_DOMAIN and CUSTOM_CF_DOMAIN.strip():
         print(f"\n[3/3] 自定义域名反代校验中 ({CUSTOM_CF_DOMAIN})...", flush=True)
@@ -578,17 +613,15 @@ async def main():
         final_items = [pass_2[i] for i, ok in enumerate(res3) if ok]
         print(f"[+] 自定义域名支持节点: {len(final_items):,} 个", flush=True)
 
-    # ==================== 按地区与 ISP 归类输出 ====================
+    # ==================== 结果归类与导出 ====================
     print("\n==================== 扫描完毕，正在生成文件 ====================")
     
-    # 按地区划分为 3 个字典
     region_data = {
         "日本": defaultdict(list),
         "香港": defaultdict(list),
         "新加坡": defaultdict(list)
     }
 
-    # 进行去重整理
     unique_set = set()
     for item in final_items:
         key = (item["region"], item["isp"], item["ip"], item["port"])
@@ -596,15 +629,12 @@ async def main():
             unique_set.add(key)
             region_data[item["region"]][item["isp"]].append(f"{item['ip']}:{item['port']}")
 
-    # 锁死输出路径为仓库根目录
     output_dir = os.getcwd()
 
-    # 依次写入 日本.txt, 香港.txt, 新加坡.txt
     for reg in ["日本", "香港", "新加坡"]:
         out_file = os.path.join(output_dir, f"{reg}.txt")
         isp_dict = region_data[reg]
         
-        # 移动在上，联通在下
         cmcc_list = sorted(isp_dict.get("移动", []), key=lambda x: (ipaddress.ip_address(x.split(":")[0]), int(x.split(":")[1])))
         cucc_list = sorted(isp_dict.get("联通", []), key=lambda x: (ipaddress.ip_address(x.split(":")[0]), int(x.split(":")[1])))
         
