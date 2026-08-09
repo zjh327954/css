@@ -1,4 +1,4 @@
-name: '每天八点自动扫描 IP'
+name: '定时扫描'
 
 on:
   schedule:
