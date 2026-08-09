@@ -8,7 +8,6 @@ import ipaddress
 import random
 import socket
 import multiprocessing
-from concurrent.futures import ProcessPoolExecutor
 
 # 1. 优化系统内核与文件描述符限制打印
 print("[*] 正在尝试优化系统内核与文件描述符限制...", flush=True)
@@ -134,32 +133,6 @@ def parse_asn_files(ports):
     random.shuffle(unique_targets)
     return unique_targets
 
-async def run_tasks_with_progress(task_func, items, step_name):
-    """带 10% 进度打印的协程调度封装"""
-    total = len(items)
-    if total == 0:
-        return []
-
-    sem = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
-    completed = 0
-    step_percent = 10
-    next_report = step_percent
-
-    async def worker(item):
-        nonlocal completed, next_report
-        async with sem:
-            res = await task_func(item)
-            completed += 1
-            current_pct = (completed / total) * 100
-            if current_pct >= next_report or completed == total:
-                print(f"    [{step_name}] 进度: {completed:,}/{total:,} ({int(current_pct)}%)", flush=True)
-                while next_report <= current_pct and next_report < 100:
-                    next_report += step_percent
-            return res
-
-    tasks = [worker(item) for item in items]
-    return await asyncio.gather(*tasks)
-
 async def check_tcp_open_async(item):
     ip, port = item[0], item[1]
     try:
@@ -233,53 +206,86 @@ async def main():
     total_targets_cnt = len(targets)
     print(f"[*] 解析完成：{unique_ips_cnt:,} 个 IP × {len(ports)} 个端口 = 共 {total_targets_cnt:,} 个测试目标。", flush=True)
 
-    # ---------------- 阶段 0: TCP 探活 (按 50,000 分批探活 + 10% 进度) ----------------
+    # ---------------- 阶段 0: TCP 探活 (按 50,000 分批 + 全局 10% 进度) ----------------
     print(f"\n[0/3 阶段 0] TCP 极速探活 (目标总数: {total_targets_cnt:,})...", flush=True)
     
     CHUNK_SIZE = 50000
     pass_0 = []
     target_chunks = [targets[i:i + CHUNK_SIZE] for i in range(0, len(targets), CHUNK_SIZE)]
-    total_chunks = len(target_chunks)
 
-    for idx, chunk in enumerate(target_chunks, 1):
-        print(f"\n  ---> 正在执行第 {idx}/{total_chunks} 批次探活 ({len(chunk):,} 个目标)...", flush=True)
-        res_chunk = await run_tasks_with_progress(check_tcp_open_async, chunk, f"批次 {idx}")
+    global_completed_0 = 0
+    next_report_0 = 10
+    sem_0 = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
+
+    async def worker_0(item):
+        nonlocal global_completed_0, next_report_0
+        async with sem_0:
+            res = await check_tcp_open_async(item)
+            global_completed_0 += 1
+            current_pct = (global_completed_0 / total_targets_cnt) * 100
+            if current_pct >= next_report_0 or global_completed_0 == total_targets_cnt:
+                print(f"    [阶段 0] 总进度: {global_completed_0:,}/{total_targets_cnt:,} ({int(current_pct)}%)", flush=True)
+                while next_report_0 <= current_pct and next_report_0 < 100:
+                    next_report_0 += 10
+            return res
+
+    for chunk in target_chunks:
+        tasks = [worker_0(item) for item in chunk]
+        res_chunk = await asyncio.gather(*tasks)
         passed = [chunk[i] for i, ok in enumerate(res_chunk) if ok]
         pass_0.extend(passed)
-        print(f"  ---> 第 {idx} 批次完成，当前累计端口开放数: {len(pass_0):,}", flush=True)
 
-    print(f"\n[+] 阶段 0 结束，端口开放总数: {len(pass_0):,}", flush=True)
+    print(f"[+] 阶段 0 结束，端口开放总数: {len(pass_0):,}", flush=True)
 
     if not pass_0: return
 
-    # ---------------- 阶段 1: TLS 校验 (带 10% 进度) ----------------
-    print(f"\n[1/3 阶段 1] TLS 证书匹配...", flush=True)
-    res1 = await run_tasks_with_progress(check_tls_sni_1, pass_0, "阶段 1")
+    # ---------------- 阶段 1: TLS 校验 (全局 10% 进度) ----------------
+    print(f"\n[1/3 阶段 1] TLS 证书匹配 (目标数: {len(pass_0):,})...", flush=True)
+    
+    total_1 = len(pass_0)
+    global_completed_1 = 0
+    next_report_1 = 10
+    sem_1 = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
+
+    async def worker_1(item):
+        nonlocal global_completed_1, next_report_1
+        async with sem_1:
+            res = await check_tls_sni_1(item)
+            global_completed_1 += 1
+            current_pct = (global_completed_1 / total_1) * 100
+            if current_pct >= next_report_1 or global_completed_1 == total_1:
+                print(f"    [阶段 1] 总进度: {global_completed_1:,}/{total_1:,} ({int(current_pct)}%)", flush=True)
+                while next_report_1 <= current_pct and next_report_1 < 100:
+                    next_report_1 += 10
+            return res
+
+    tasks1 = [worker_1(item) for item in pass_0]
+    res1 = await asyncio.gather(*tasks1)
     pass_1 = [pass_0[i] for i, ok in enumerate(res1) if ok]
-    print(f"[+] TLS 校验通过数: {len(pass_1):,}", flush=True)
+    print(f"[+] 阶段 1 结束，TLS 校验通过数: {len(pass_1):,}", flush=True)
 
     if not pass_1: return
 
-    # ---------------- 阶段 2: HTTP 校验 (快速直接运行，不打 10% 日志) ----------------
+    # ---------------- 阶段 2: HTTP 校验 (不打印中间日志) ----------------
     print(f"\n[2/3 阶段 2] HTTP 重定向校验...", flush=True)
     sem_fast = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
     tasks2 = [check_http_async(item, sem_fast) for item in pass_1]
     res2 = await asyncio.gather(*tasks2)
     pass_2 = [pass_1[i] for i, ok in enumerate(res2) if ok]
-    print(f"[+] HTTP 校验通过数: {len(pass_2):,}", flush=True)
+    print(f"[+] 阶段 2 结束，HTTP 校验通过数: {len(pass_2):,}", flush=True)
 
     if not pass_2: return
 
-    # ---------------- 阶段 3: 自定义域名校验 (快速直接运行，不打 10% 日志) ----------------
+    # ---------------- 阶段 3: 自定义域名校验 (不打印中间日志) ----------------
     final_items = pass_2
     if CUSTOM_CF_DOMAIN:
         print(f"\n[3/3 阶段 3] 自定义域名校验 ({CUSTOM_CF_DOMAIN})...", flush=True)
         tasks3 = [check_tls_custom_domain(item, sem_fast) for item in pass_2]
         res3 = await asyncio.gather(*tasks3)
         final_items = [pass_2[i] for i, ok in enumerate(res3) if ok]
-        print(f"[+] 最终有效数: {len(final_items):,}", flush=True)
+        print(f"[+] 阶段 3 结束，最终有效数: {len(final_items):,}", flush=True)
 
-    # ---------------- 分类保存到 自用/ 目录 ----------------
+    # ---------------- 分类保存 ----------------
     output_dir = os.path.join(BASE_DIR, "自用")
     os.makedirs(output_dir, exist_ok=True)
 
