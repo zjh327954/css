@@ -149,25 +149,28 @@ def get_cidrs_from_asn_sync(asn_clean):
     return cidrs
 
 
-def sample_one_ip_per_24(net):
+def sample_ips_per_24(net, count=3):
     """
     接收一个 ipaddress.IPv4Network 对象：
-    - 若网络掩码 <= 24 (比如 /16, /20, /24)，拆分成多个 /24 段，在每个 /24 段内随机抽取 1 个 IP；
-    - 若网络掩码 > 24 (比如 /25, /32)，直接随机抽取 1 个可用 IP。
+    - 若网络掩码 <= 24 (比如 /16, /20, /24)，拆分成多个 /24 段，在每个 /24 段内随机抽取 count(默认3) 个 IP；
+    - 若网络掩码 > 24 (比如 /25, /32)，最多随机抽取 count 个可用 IP。
     """
     sampled_ips = []
     if net.prefixlen <= 24:
         subnets_24 = list(net.subnets(new_prefix=24))
         for sub in subnets_24:
-            hosts = list(sub.hosts())
+            hosts = [str(ip) for ip in sub.hosts()]
             if hosts:
-                sampled_ips.append(str(random.choice(hosts)))
+                # 若可用 IP 不够 count 个则全取，否则随机抽取 count 个
+                num_to_sample = min(len(hosts), count)
+                sampled_ips.extend(random.sample(hosts, num_to_sample))
             else:
                 sampled_ips.append(str(sub.network_address))
     else:
-        hosts = list(net.hosts())
+        hosts = [str(ip) for ip in net.hosts()]
         if hosts:
-            sampled_ips.append(str(random.choice(hosts)))
+            num_to_sample = min(len(hosts), count)
+            sampled_ips.extend(random.sample(hosts, num_to_sample))
         else:
             sampled_ips.append(str(net.network_address))
             
@@ -175,7 +178,7 @@ def sample_one_ip_per_24(net):
 
 
 async def parse_targets_async(input_str):
-    """解析输入，拆分为 /24 并在每个 /24 段内随机抽取 1 个 IP"""
+    """解析输入，拆分为 /24 并在每个 /24 段内随机抽取 3 个 IP"""
     loop = asyncio.get_running_loop()
     raw_targets = [t.strip() for t in re.split(r'[\s,]+', input_str) if t.strip()]
     sampled_ips = []
@@ -184,7 +187,7 @@ async def parse_targets_async(input_str):
         # 尝试作为 CIDR/单个 IP 解析
         try:
             net = ipaddress.ip_network(item, strict=False)
-            sampled_ips.extend(sample_one_ip_per_24(net))
+            sampled_ips.extend(sample_ips_per_24(net, count=3))
             continue
         except ValueError:
             pass
@@ -196,7 +199,7 @@ async def parse_targets_async(input_str):
             for cidr in cidrs:
                 try:
                     net = ipaddress.ip_network(cidr, strict=False)
-                    sampled_ips.extend(sample_one_ip_per_24(net))
+                    sampled_ips.extend(sample_ips_per_24(net, count=3))
                 except ValueError:
                     continue
 
@@ -292,7 +295,7 @@ async def main():
 
     target_ports = parse_ports(ports_input)
     
-    print(f"\n[*] 正在解析目标地址/ASN: {target_input} (提取规则: 每个 /24 段仅抽选 1 个 IP) ...", flush=True)
+    print(f"\n[*] 正在解析目标地址/ASN: {target_input} (提取规则: 每个 /24 段抽取 3 个 IP) ...", flush=True)
     all_ips = await parse_targets_async(target_input)
 
     if not all_ips:
@@ -304,7 +307,7 @@ async def main():
     
     total_concurrency = STAGE1_CONCURRENCY * CPU_CORES
     print(f"[*] 引擎初始化：uvloop={UVLOOP_ENABLED} | 进程数={CPU_CORES} | 单进程并发={STAGE1_CONCURRENCY} | 总并发数={total_concurrency}", flush=True)
-    print(f"[*] 解析完成：共提取出 {len(all_ips)} 个代表 IP（涵盖 {len(all_ips)} 个 /24 网段） × {len(target_ports)} 个端口 = 共 {total_targets_count:,} 个测试目标。", flush=True)
+    print(f"[*] 解析完成：共提取出 {len(all_ips)} 个代表 IP × {len(target_ports)} 个端口 = 共 {total_targets_count:,} 个测试目标。", flush=True)
 
     # ==================== TLS 证书探测 ====================
     print(f"\n[*] 正在检测 TLS 证书握手...", flush=True)
