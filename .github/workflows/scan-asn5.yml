@@ -3,7 +3,7 @@ name: '每日扫描'
 on:
   schedule:
     # 北京时间每天 09:10 触发 (UTC 01:10)
-    - cron: '20 1 * * *'
+    - cron: '0 0 * * *'
 
   workflow_dispatch:
     inputs:
