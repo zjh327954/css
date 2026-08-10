@@ -53,4 +53,4 @@ jobs:
         with:
           commit_message: "Update scanned ASN txt files [skip ci]"
           file_pattern: "**/*.txt"
-          pull: '--rebase'
+          pull_options: '--rebase'
