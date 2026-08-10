@@ -67,14 +67,14 @@ CUSTOM_CF_DOMAIN = os.getenv("CUSTOM_CF_DOMAIN", "327954.ccwu.cc")
 # 阶段 1：TLS 粗筛 (www.cloudflare.com)
 CF_SNI_1 = "www.cloudflare.com"
 STAGE1_CONCURRENCY = int(os.getenv("STAGE1_CONCURRENCY", "1500"))   # 单进程并发数
-STAGE1_TIMEOUT = 2        
+STAGE1_TIMEOUT = 2        # 超时收紧至 0.8s
 
 # 阶段 2：HTTP 验证 Host (crypto.cloudflare.com)
 CF_HOST_TEST = "crypto.cloudflare.com"
 STAGE2_TIMEOUT = 1.2
 
 # 阶段 3：自定义域名校验超时
-STAGE3_TIMEOUT = 2      # 微调至 1.5s，提高自定义域名 SNI 握手成功率
+STAGE3_TIMEOUT = 1.2
 
 # CPU 核心数 (决定多进程并行数量)
 CPU_CORES = max(1, os.cpu_count() or 1)
@@ -249,7 +249,7 @@ async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
 
 
 async def check_http_async(ip, port, host, timeout_val, sem):
-    """阶段二：校验 HTTP 响应 (兼容 301/302/307/308 及 Cloudflare 响应)"""
+    """阶段二：校验 HTTP 301/302 重定向"""
     async with sem:
         writer = None
         try:
@@ -264,22 +264,13 @@ async def check_http_async(ip, port, host, timeout_val, sem):
             writer.write(req.encode('latin1'))
             await writer.drain()
 
-            # 扩大读取长度至 2048 字节，避免 Header 被截断
-            data = await asyncio.wait_for(reader.read(2048), timeout=timeout_val)
+            data = await asyncio.wait_for(reader.read(512), timeout=timeout_val)
 
             if not data:
                 return False
 
             resp_str = data.decode('latin1', errors='ignore').lower()
-            
-            # 正则匹配任意 HTTP 3xx 重定向状态码
-            is_3xx = re.search(r'http/1\.[01]\s+3\d\d', resp_str) is not None
-            has_location = "location:" in resp_str
-            is_cf_server = "server: cloudflare" in resp_str
-
-            # 只要是标准 3xx 重定向并带 Location，或者属于 Cloudflare 响应即可通过
-            return (is_3xx and has_location) or (is_cf_server and ("location:" in resp_str or "http/1.1 200" in resp_str or "http/1.1 403" in resp_str))
-
+            return ("http/1.1 301" in resp_str or "http/1.1 302" in resp_str) and ("location:" in resp_str)
         except Exception:
             return False
         finally:
@@ -326,6 +317,7 @@ def _process_worker_stage1(targets_chunk):
                 # 计算当前处于全局第几个 10% 节点
                 milestone_idx = curr // global_step
                 if 1 <= milestone_idx <= 10:
+                    # 确保每个 10% 阶段全局只会被一个进程打印一次
                     if global_printed_milestones[milestone_idx - 1] == 0:
                         global_printed_milestones[milestone_idx - 1] = 1
                         pct = min(100, milestone_idx * 10)
@@ -367,15 +359,17 @@ async def main():
     chunk_size = max(1, total_targets_count // num_chunks)
     chunks = [targets[i:i + chunk_size] for i in range(0, total_targets_count, chunk_size)]
 
+    # 创建跨进程共享内存对象
     manager = multiprocessing.Manager()
-    counter = manager.Value('i', 0)        
-    pass_counter = manager.Value('i', 0)   
+    counter = manager.Value('i', 0)        # 已测试总数
+    pass_counter = manager.Value('i', 0)   # 匹配通过总数
     lock = manager.Lock()
-    printed_array = manager.Array('i', [0] * 10) 
+    printed_array = manager.Array('i', [0] * 10) # 记录 10% ~ 100% 打印标记位
 
     pass_1 = []
     loop = asyncio.get_running_loop()
     
+    # 传入 initializer 将共享锁与共享变量注入各个子进程
     with ProcessPoolExecutor(
         max_workers=CPU_CORES,
         initializer=_init_process_worker,
@@ -409,8 +403,7 @@ async def main():
     if CUSTOM_CF_DOMAIN and CUSTOM_CF_DOMAIN.strip():
         domain = CUSTOM_CF_DOMAIN.strip()
         print(f"[3/3 第三阶段自定义域名校验] 正在校验域名 {domain}...", flush=True)
-        stage3_sem = asyncio.Semaphore(500)
-        tasks3 = [check_tls_sni_async(ip, port, domain, STAGE3_TIMEOUT, stage3_sem) for ip, port in pass_2]
+        tasks3 = [check_tls_sni_async(ip, port, domain, STAGE3_TIMEOUT, sem) for ip, port in pass_2]
         res3 = await asyncio.gather(*tasks3)
         final_items = [pass_2[i] for i, ok in enumerate(res3) if ok]
         print(f"[+] 第三阶段完成！支持自定义托管域名的优选反代 IP: {len(final_items)} 个", flush=True)
@@ -423,19 +416,23 @@ async def main():
     print("\n==================== 扫描结束 ====================", flush=True)
     print(f"最终有效目标总数: {len(final_items)}", flush=True)
 
+    # 替换非法字符
     clean_input = re.sub(r'[^\w\.-]', '_', target_input.strip())
     
+    # 防止文件名超过 Linux 255 字节限制（输入多网段时自动截断）
     if len(clean_input) > 30:
         filename = f"{clean_input[:30]}_batch.txt"
     else:
         filename = f"{clean_input}.txt"
 
+    # 自动定位仓库根目录（解决脚本放在 '脚本' 子目录下导致路径偏移的问题）
     repo_root = BASE_DIR
     if os.path.exists(os.path.join(os.path.dirname(BASE_DIR), ".git")):
         repo_root = os.path.dirname(BASE_DIR)
     elif os.path.basename(BASE_DIR) == "脚本":
         repo_root = os.path.dirname(BASE_DIR)
 
+    # 指定输出保存路径为仓库根目录下的 '优选反代ip'
     output_dir = os.path.join(repo_root, "优选反代ip")
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, filename)
