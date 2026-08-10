@@ -73,8 +73,9 @@ STAGE1_TIMEOUT = 2
 CF_HOST_TEST = "crypto.cloudflare.com"
 STAGE2_TIMEOUT = 1.2
 
-# 阶段 3：自定义域名校验超时
-STAGE3_TIMEOUT = 2      # 微调至 1.5s，提高自定义域名 SNI 握手成功率
+# 阶段 3：自定义域名校验超时与并发控制（适当放宽超时与降低并发，提高握手成功率）
+STAGE3_TIMEOUT = 2.5      
+STAGE3_CONCURRENCY = 200
 
 # CPU 核心数 (决定多进程并行数量)
 CPU_CORES = max(1, os.cpu_count() or 1)
@@ -196,12 +197,15 @@ async def parse_targets_async(input_str):
 
 
 def match_domain_in_cert(sni_domain, cert_str):
+    """对 SSL 证书信息做宽容度更高的校验，防止泛域名与 Cloudflare 边缘证书误杀"""
     sni_domain = sni_domain.lower()
     cert_str = cert_str.lower()
     
+    # 1. 精确匹配自定义域名
     if sni_domain in cert_str:
         return True
         
+    # 2. 通配符与根域名匹配 (如 *.ccwu.cc 或 ccwu.cc)
     parts = sni_domain.split(".")
     if len(parts) >= 2:
         main_domain = ".".join(parts[-2:])
@@ -209,14 +213,16 @@ def match_domain_in_cert(sni_domain, cert_str):
         if main_domain in cert_str or wildcard_domain in cert_str:
             return True
             
-    if "cloudflare" in sni_domain and "cloudflare" in cert_str:
+    # 3. 兜底匹配：Cloudflare 官方边缘/SNI 证书关键词
+    cf_keywords = ["cloudflare", "sni.cloudflared.com", "workers.dev"]
+    if any(kw in cert_str for kw in cf_keywords):
         return True
 
     return False
 
 
 async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
-    """阶段一/阶段三：异步 TLS 握手优化"""
+    """阶段一/阶段三：异步 TLS 握手优化（带强制 Socket/Transport 释放）"""
     async with sem:
         writer = None
         try:
@@ -241,9 +247,12 @@ async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
             return False
         finally:
             if writer:
-                writer.close()
                 try:
-                    writer.transport.abort()
+                    writer.close()
+                    # 强行 abort 传输层，彻底释放底层的 Socket 句柄
+                    transport = writer.get_extra_info('transport')
+                    if transport:
+                        transport.abort()
                 except Exception:
                     pass
 
@@ -275,9 +284,11 @@ async def check_http_async(ip, port, host, timeout_val, sem):
             return False
         finally:
             if writer:
-                writer.close()
                 try:
-                    writer.transport.abort()
+                    writer.close()
+                    transport = writer.get_extra_info('transport')
+                    if transport:
+                        transport.abort()
                 except Exception:
                     pass
 
@@ -400,8 +411,8 @@ async def main():
     if CUSTOM_CF_DOMAIN and CUSTOM_CF_DOMAIN.strip():
         domain = CUSTOM_CF_DOMAIN.strip()
         print(f"[3/3 第三阶段自定义域名校验] 正在校验域名 {domain}...", flush=True)
-        # 为第三阶段独立设置平滑并发，避免过度压垮 SNI 端口
-        stage3_sem = asyncio.Semaphore(500)
+        # 为第三阶段限制平滑并发（200）并给足 2.5s 超时时间，防止连接池拥塞导致误杀
+        stage3_sem = asyncio.Semaphore(STAGE3_CONCURRENCY)
         tasks3 = [check_tls_sni_async(ip, port, domain, STAGE3_TIMEOUT, stage3_sem) for ip, port in pass_2]
         res3 = await asyncio.gather(*tasks3)
         final_items = [pass_2[i] for i, ok in enumerate(res3) if ok]
@@ -422,7 +433,7 @@ async def main():
     else:
         filename = f"{clean_input}.txt"
 
-    # 恢复：自动定位项目根目录（解决脚本存放在子目录时导错路径的问题）
+    # 自动定位项目根目录（解决脚本存放在子目录时导错路径的问题）
     repo_root = BASE_DIR
     if os.path.exists(os.path.join(os.path.dirname(BASE_DIR), ".git")):
         repo_root = os.path.dirname(BASE_DIR)
