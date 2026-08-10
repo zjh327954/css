@@ -249,7 +249,7 @@ async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
 
 
 async def check_http_async(ip, port, host, timeout_val, sem):
-    """阶段二：校验 HTTP 301/302 重定向"""
+    """阶段二：校验 HTTP 响应 (兼容 301/302/307/308 及 Cloudflare 响应)"""
     async with sem:
         writer = None
         try:
@@ -264,13 +264,22 @@ async def check_http_async(ip, port, host, timeout_val, sem):
             writer.write(req.encode('latin1'))
             await writer.drain()
 
-            data = await asyncio.wait_for(reader.read(512), timeout=timeout_val)
+            # 扩大读取长度至 2048 字节，避免 Header 被截断
+            data = await asyncio.wait_for(reader.read(2048), timeout=timeout_val)
 
             if not data:
                 return False
 
             resp_str = data.decode('latin1', errors='ignore').lower()
-            return ("http/1.1 301" in resp_str or "http/1.1 302" in resp_str) and ("location:" in resp_str)
+            
+            # 正则匹配任意 HTTP 3xx 重定向状态码
+            is_3xx = re.search(r'http/1\.[01]\s+3\d\d', resp_str) is not None
+            has_location = "location:" in resp_str
+            is_cf_server = "server: cloudflare" in resp_str
+
+            # 只要是标准 3xx 重定向并带 Location，或者属于 Cloudflare 响应即可通过
+            return (is_3xx and has_location) or (is_cf_server and ("location:" in resp_str or "http/1.1 200" in resp_str or "http/1.1 403" in resp_str))
+
         except Exception:
             return False
         finally:
@@ -400,7 +409,6 @@ async def main():
     if CUSTOM_CF_DOMAIN and CUSTOM_CF_DOMAIN.strip():
         domain = CUSTOM_CF_DOMAIN.strip()
         print(f"[3/3 第三阶段自定义域名校验] 正在校验域名 {domain}...", flush=True)
-        # 为第三阶段独立设置平滑并发，避免过度压垮 SNI 端口
         stage3_sem = asyncio.Semaphore(500)
         tasks3 = [check_tls_sni_async(ip, port, domain, STAGE3_TIMEOUT, stage3_sem) for ip, port in pass_2]
         res3 = await asyncio.gather(*tasks3)
@@ -422,14 +430,12 @@ async def main():
     else:
         filename = f"{clean_input}.txt"
 
-    # 恢复：自动定位项目根目录（解决脚本存放在子目录时导错路径的问题）
     repo_root = BASE_DIR
     if os.path.exists(os.path.join(os.path.dirname(BASE_DIR), ".git")):
         repo_root = os.path.dirname(BASE_DIR)
     elif os.path.basename(BASE_DIR) == "脚本":
         repo_root = os.path.dirname(BASE_DIR)
 
-    # 指定输出保存路径为根目录下的 '优选反代ip'
     output_dir = os.path.join(repo_root, "优选反代ip")
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, filename)
