@@ -1,3 +1,8 @@
+import os
+import re
+import sys
+import asyncio
+import ssl
 import random
 import socket
 import multiprocessing
@@ -106,20 +111,18 @@ async def main():
 
     final_items = sorted(final_items, key=lambda x: (ipaddress.ip_address(x[0]), x[1]))
 
-    # ==================== 导出结果 (已修改路径) ====================
+    # ==================== 导出结果 ====================
     print("\n==================== 扫描结束 ====================", flush=True)
     print(f"最终有效目标总数: {len(final_items)}", flush=True)
 
-    # 自动正则提取 ASN 编号（例如 36002 -> AS36002.txt）
     match_asn = re.search(r'(?:AS)?(\d+)', target_input, re.IGNORECASE)
     if match_asn:
-        asn_str = match_asn.group(1)
-        filename = f"AS{asn_str}.txt"
+        filename = f"AS{match_asn.group(1)}.txt"
     else:
         clean_input = re.sub(r'[^\w\.-]', '_', target_input.strip())
         filename = f"{clean_input[:30]}.txt"
 
-    # 指定输出保存路径为 '优选反代ip' 目录
+    # 指定输出路径为仓库根目录下的 '优选反代ip' 目录
     output_dir = os.path.join(BASE_DIR, "优选反代ip")
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, filename)
@@ -129,3 +132,6 @@ async def main():
             f.write(f"{ip}:{port}\n")
 
     print(f"\n[+] 最终结果已排序保存至：{output_path} (格式为 IP:PORT)", flush=True)
+
+if __name__ == "__main__":
+    asyncio.run(main())
