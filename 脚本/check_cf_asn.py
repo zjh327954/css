@@ -1,4 +1,4 @@
-import asyncio
+Import asyncio
 import ssl
 import sys
 import os
@@ -9,17 +9,49 @@ import ipaddress
 import random
 import socket
 import multiprocessing
-import logging
 from concurrent.futures import ProcessPoolExecutor
 from functools import lru_cache
 
-# 静默 uvloop / asyncio 底层 SSL 连接断开刷屏报错
-logging.getLogger("asyncio").setLevel(logging.CRITICAL)
-
-# 获取当前脚本所在的绝对路径（仓库根目录）
+# 获取当前脚本所在的绝对路径
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# 尝试加载 uvloop
+# ==================== 0. 自动优化系统内核与文件句柄限制 ====================
+def optimize_system_limits():
+    """自动化调优系统文件句柄限制 (ulimit) 与内核网络参数 (sysctl)"""
+    print("[*] 正在尝试优化系统内核与文件描述符限制...", flush=True)
+
+    # 1. 自动提升文件句柄限制 (ulimit -n)
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        target_limit = max(65535, hard)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target_limit, target_limit))
+        new_soft, new_hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        print(f"[+] 文件描述符上限 (ulimit) 调整成功: {new_soft}", flush=True)
+    except Exception as e:
+        print(f"[-] 调整 ulimit 失败 (可能无权限): {e}", flush=True)
+
+    # 2. 修改内核网络参数 (需要 Root 权限)
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        sysctl_settings = {
+            "/proc/sys/net/core/somaxconn": "65535",
+            "/proc/sys/net/ipv4/tcp_tw_reuse": "1",
+            "/proc/sys/net/ipv4/ip_local_port_range": "1024 65535",
+        }
+
+        for path, value in sysctl_settings.items():
+            try:
+                with open(path, "w") as f:
+                    f.write(value)
+                print(f"[+] 内核参数已优化: {path} -> {value}", flush=True)
+            except Exception as e:
+                print(f"[-] 设置 {path} 失败: {e}", flush=True)
+    else:
+        print("[!] 提示: 当前非 Root 用户，跳过 sysctl 内核参数优化（若在 GitHub Actions 中默认是 Root）", flush=True)
+
+# 启动第一时间执行系统调优
+optimize_system_limits()
+
+# 尝试加载 uvloop 替代 Python 原生 asyncio 循环 (IO 性能提升 2~4 倍)
 try:
     import uvloop
     uvloop.install()
@@ -27,42 +59,41 @@ try:
 except ImportError:
     UVLOOP_ENABLED = False
 
-# ==================== 配置与默认值 ====================
+# ==================== 极限性能配置区域 ====================
 DEFAULT_TARGETS = os.getenv("TARGET_LIST", os.getenv("ASN_LIST", "AS36002"))
 DEFAULT_PORTS = "443, 8443, 2053, 2083, 2096"
 CUSTOM_CF_DOMAIN = os.getenv("CUSTOM_CF_DOMAIN", "327954.ccwu.cc")
 
 # 阶段 1：TLS 粗筛 (www.cloudflare.com)
 CF_SNI_1 = "www.cloudflare.com"
-STAGE1_CONCURRENCY = int(os.getenv("STAGE1_CONCURRENCY", "1500"))   # 单进程并发数（第一阶段）
-STAGE1_TIMEOUT = 2        # 超时时间
+STAGE1_CONCURRENCY = int(os.getenv("STAGE1_CONCURRENCY", "1500"))   # 单进程并发数
+STAGE1_TIMEOUT = 2        
 
-# 阶段 2：HTTP 验证并发数（硬件平滑控速，固定为 200 并发）
-STAGE2_CONCURRENCY = 200
+# 阶段 2：HTTP 验证 Host (crypto.cloudflare.com)
 CF_HOST_TEST = "crypto.cloudflare.com"
 STAGE2_TIMEOUT = 1.2
 
 # 阶段 3：自定义域名校验超时
-STAGE3_TIMEOUT = 1.2
+STAGE3_TIMEOUT = 2      # 微调至 1.5s，提高自定义域名 SNI 握手成功率
 
 # CPU 核心数 (决定多进程并行数量)
 CPU_CORES = max(1, os.cpu_count() or 1)
 
-# 优化 SSL Context
+# 优化 SSL Context 避免不必要的握手开销
 SSL_CTX = ssl.create_default_context()
 SSL_CTX.check_hostname = False
 SSL_CTX.verify_mode = ssl.CERT_NONE
 SSL_CTX.options |= ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3
 
-# 全局共享变量
+# 全局共享变量定义 (多进程进度与通过数同步)
 global_counter = None
 global_pass_counter = None
 global_lock = None
 global_total = 0
 global_step = 0
 global_printed_milestones = None
+# =========================================================
 
-# ==================== 必备解析与工具函数 ====================
 def parse_ports(port_str):
     """支持 443,8443 或 1-65535 范围解析"""
     if not port_str:
@@ -87,10 +118,14 @@ def parse_ports(port_str):
                 
     return sorted(list(ports)) if ports else [443, 8443, 2053, 2083, 2096]
 
+
 @lru_cache(maxsize=32)
 def get_ips_from_asn_sync(asn_clean):
+    """同步阻塞获取 ASN 的 IP 段 (带 lru_cache 避免重复查询)"""
     import urllib.request
     cidrs = []
+    
+    # 源 1: RIPE
     try:
         ripe_url = f"https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{asn_clean}"
         req = urllib.request.Request(ripe_url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -104,6 +139,7 @@ def get_ips_from_asn_sync(asn_clean):
     except Exception:
         pass
 
+    # 源 2: BGPView 兜底
     if not cidrs:
         try:
             bgp_url = f"https://api.bgpview.io/asn/{asn_clean}/prefixes"
@@ -131,7 +167,9 @@ def get_ips_from_asn_sync(asn_clean):
 
     return ip_list
 
+
 async def parse_targets_async(input_str):
+    """在 asyncio 执行器中运行同步网络请求，避免阻塞 EventLoop"""
     loop = asyncio.get_running_loop()
     raw_targets = [t.strip() for t in re.split(r'[\s,]+', input_str) if t.strip()]
     all_ips = []
@@ -156,36 +194,47 @@ async def parse_targets_async(input_str):
     random.shuffle(unique_ips)
     return unique_ips
 
+
 def match_domain_in_cert(sni_domain, cert_str):
     sni_domain = sni_domain.lower()
     cert_str = cert_str.lower()
+    
     if sni_domain in cert_str:
         return True
+        
     parts = sni_domain.split(".")
     if len(parts) >= 2:
         main_domain = ".".join(parts[-2:])
         wildcard_domain = f"*.{main_domain}"
         if main_domain in cert_str or wildcard_domain in cert_str:
             return True
+            
     if "cloudflare" in sni_domain and "cloudflare" in cert_str:
         return True
+
     return False
 
+
 async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
+    """阶段一/阶段三：异步 TLS 握手优化"""
     async with sem:
         writer = None
         try:
             conn = asyncio.open_connection(ip, port, ssl=SSL_CTX, server_hostname=sni)
             reader, writer = await asyncio.wait_for(conn, timeout=timeout_val)
+            
             sock = writer.get_extra_info('socket')
             if sock:
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
             ssl_obj = writer.get_extra_info('ssl_object')
             if not ssl_obj:
                 return False
+
             der_cert = ssl_obj.getpeercert(binary_form=True)
             if not der_cert:
                 return False
+            
             cert_str = der_cert.decode('latin1', errors='ignore').lower()
             return match_domain_in_cert(sni, cert_str)
         except Exception:
@@ -198,21 +247,28 @@ async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
                 except Exception:
                     pass
 
+
 async def check_http_async(ip, port, host, timeout_val, sem):
+    """阶段二：校验 HTTP 301/302 重定向"""
     async with sem:
         writer = None
         try:
             conn = asyncio.open_connection(ip, port, ssl=SSL_CTX, server_hostname=host)
             reader, writer = await asyncio.wait_for(conn, timeout=timeout_val)
+            
             sock = writer.get_extra_info('socket')
             if sock:
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
             req = f"GET / HTTP/1.1\r\nHost: {host}\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n"
             writer.write(req.encode('latin1'))
             await writer.drain()
+
             data = await asyncio.wait_for(reader.read(512), timeout=timeout_val)
+
             if not data:
                 return False
+
             resp_str = data.decode('latin1', errors='ignore').lower()
             return ("http/1.1 301" in resp_str or "http/1.1 302" in resp_str) and ("location:" in resp_str)
         except Exception:
@@ -225,35 +281,47 @@ async def check_http_async(ip, port, host, timeout_val, sem):
                 except Exception:
                     pass
 
+
+# ==================== 多进程共享变量初始化 ====================
 def _init_process_worker(counter, pass_counter, lock, total, printed_array):
+    """初始化子进程的全局锁与共享内存计数器"""
     global global_counter, global_pass_counter, global_lock, global_total, global_step, global_printed_milestones
     global_counter = counter
     global_pass_counter = pass_counter
     global_lock = lock
     global_total = total
-    global_step = max(1, total // 10)
+    global_step = max(1, total // 10)  # 全局总量的 10% 步长
     global_printed_milestones = printed_array
 
+
 def _process_worker_stage1(targets_chunk):
+    """子进程内部运行独立的 uvloop/asyncio 事件循环，同步全局 10% 进度及通过数"""
     if UVLOOP_ENABLED:
         uvloop.install()
         
     async def _run():
         sem = asyncio.Semaphore(STAGE1_CONCURRENCY)
+
         async def worker(ip, port):
             res = await check_tls_sni_async(ip, port, CF_SNI_1, STAGE1_TIMEOUT, sem)
+            
+            # 使用原子锁更新全局共享计数器
             with global_lock:
                 global_counter.value += 1
                 if res:
                     global_pass_counter.value += 1
+                    
                 curr = global_counter.value
                 passed = global_pass_counter.value
+                
+                # 计算当前处于全局第几个 10% 节点
                 milestone_idx = curr // global_step
                 if 1 <= milestone_idx <= 10:
                     if global_printed_milestones[milestone_idx - 1] == 0:
                         global_printed_milestones[milestone_idx - 1] = 1
                         pct = min(100, milestone_idx * 10)
                         print(f"  [第一阶段全局进度] {pct}% ({curr:,}/{global_total:,}) | 已通过: {passed:,} 个", flush=True)
+
             return res
 
         tasks = [worker(ip, port) for ip, port in targets_chunk]
@@ -262,7 +330,7 @@ def _process_worker_stage1(targets_chunk):
 
     return asyncio.run(_run())
 
-# ==================== 主流程 ====================
+
 async def main():
     target_input = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_TARGETS
     ports_input = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_PORTS
@@ -278,22 +346,23 @@ async def main():
 
     targets = [(ip, port) for ip in all_ips for port in target_ports]
     total_targets_count = len(targets)
-
+    
     total_concurrency = STAGE1_CONCURRENCY * CPU_CORES
-    print(f"[*] 引擎初始化：uvloop={UVLOOP_ENABLED} | 进程数={CPU_CORES} | 第一阶段并发={total_concurrency} | 第二阶段速率=200", flush=True)
+    print(f"[*] 引擎初始化：uvloop={UVLOOP_ENABLED} | 进程数={CPU_CORES} | 单进程并发={STAGE1_CONCURRENCY} | 总并发数={total_concurrency}", flush=True)
     print(f"[*] 解析完成：{len(all_ips)} 个 IP × {len(target_ports)} 个端口 = 共 {total_targets_count:,} 个测试目标。", flush=True)
 
-    # 1. 第一阶段
+    # ==================== 1. 多进程 TLS 粗筛 ====================
     print(f"\n[1/3 第一阶段 TLS 探测] 多进程并行并发中...", flush=True)
+    
     num_chunks = CPU_CORES * 4
     chunk_size = max(1, total_targets_count // num_chunks)
     chunks = [targets[i:i + chunk_size] for i in range(0, total_targets_count, chunk_size)]
 
     manager = multiprocessing.Manager()
-    counter = manager.Value('i', 0)
-    pass_counter = manager.Value('i', 0)
+    counter = manager.Value('i', 0)        
+    pass_counter = manager.Value('i', 0)   
     lock = manager.Lock()
-    printed_array = manager.Array('i', [0] * 10)
+    printed_array = manager.Array('i', [0] * 10) 
 
     pass_1 = []
     loop = asyncio.get_running_loop()
@@ -314,10 +383,10 @@ async def main():
         print("[-] 无有效 IP:端口 通过第一阶段。", flush=True)
         return
 
-    # 2. 第二阶段
-    sem_stage2 = asyncio.Semaphore(STAGE2_CONCURRENCY)
-    print(f"[2/3 第二阶段 HTTP 校验] 正在以 {STAGE2_CONCURRENCY} 并发平滑校验 {len(pass_1)} 个候选目标...", flush=True)
-    tasks2 = [check_http_async(ip, port, CF_HOST_TEST, STAGE2_TIMEOUT, sem_stage2) for ip, port in pass_1]
+    # ==================== 2. HTTP 严格 301/302 校验 ====================
+    sem = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
+    print(f"[2/3 第二阶段 HTTP 校验] 正在快速校验 {len(pass_1)} 个候选目标...", flush=True)
+    tasks2 = [check_http_async(ip, port, CF_HOST_TEST, STAGE2_TIMEOUT, sem) for ip, port in pass_1]
     res2 = await asyncio.gather(*tasks2)
     pass_2 = [pass_1[i] for i, ok in enumerate(res2) if ok]
     print(f"[+] 第二阶段完成！可用 301 重定向目标: {len(pass_2)} 个\n", flush=True)
@@ -326,12 +395,14 @@ async def main():
         print("[-] 无有效 IP:端口 通过第二阶段。", flush=True)
         return
 
-    # 3. 第三阶段
+    # ==================== 3. 自定义托管域名反代校验 ====================
     final_items = pass_2
     if CUSTOM_CF_DOMAIN and CUSTOM_CF_DOMAIN.strip():
         domain = CUSTOM_CF_DOMAIN.strip()
-        print(f"[3/3 第三阶段自定义域名校验] 正在以 {STAGE2_CONCURRENCY} 并发校验域名 {domain}...", flush=True)
-        tasks3 = [check_tls_sni_async(ip, port, domain, STAGE3_TIMEOUT, sem_stage2) for ip, port in pass_2]
+        print(f"[3/3 第三阶段自定义域名校验] 正在校验域名 {domain}...", flush=True)
+        # 为第三阶段独立设置平滑并发，避免过度压垮 SNI 端口
+        stage3_sem = asyncio.Semaphore(500)
+        tasks3 = [check_tls_sni_async(ip, port, domain, STAGE3_TIMEOUT, stage3_sem) for ip, port in pass_2]
         res3 = await asyncio.gather(*tasks3)
         final_items = [pass_2[i] for i, ok in enumerate(res3) if ok]
         print(f"[+] 第三阶段完成！支持自定义托管域名的优选反代 IP: {len(final_items)} 个", flush=True)
@@ -340,19 +411,26 @@ async def main():
 
     final_items = sorted(final_items, key=lambda x: (ipaddress.ip_address(x[0]), x[1]))
 
-    # ==================== 导出结果（目标输出目录已更名） ====================
+    # ==================== 导出结果 ====================
     print("\n==================== 扫描结束 ====================", flush=True)
     print(f"最终有效目标总数: {len(final_items)}", flush=True)
 
-    match_asn = re.search(r'(?:AS)?(\d+)', target_input, re.IGNORECASE)
-    if match_asn:
-        filename = f"AS{match_asn.group(1)}.txt"
+    clean_input = re.sub(r'[^\w\.-]', '_', target_input.strip())
+    
+    if len(clean_input) > 30:
+        filename = f"{clean_input[:30]}_batch.txt"
     else:
-        clean_input = re.sub(r'[^\w\.-]', '_', target_input.strip())
-        filename = f"{clean_input[:30]}.txt"
+        filename = f"{clean_input}.txt"
 
-    # 指定保存路径为 '优选反代ip'
-    output_dir = os.path.join(BASE_DIR, "优选反代ip")
+    # 恢复：自动定位项目根目录（解决脚本存放在子目录时导错路径的问题）
+    repo_root = BASE_DIR
+    if os.path.exists(os.path.join(os.path.dirname(BASE_DIR), ".git")):
+        repo_root = os.path.dirname(BASE_DIR)
+    elif os.path.basename(BASE_DIR) == "脚本":
+        repo_root = os.path.dirname(BASE_DIR)
+
+    # 指定输出保存路径为根目录下的 '优选反代ip'
+    output_dir = os.path.join(repo_root, "优选反代ip")
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, filename)
 
@@ -360,7 +438,7 @@ async def main():
         for ip, port in final_items:
             f.write(f"{ip}:{port}\n")
 
-    print(f"\n[+] 最终结果已保存至：{output_path} (格式为 IP:PORT)", flush=True)
+    print(f"\n[+] 最终结果已排序保存至：{output_path} (格式为 IP:PORT)", flush=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
