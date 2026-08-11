@@ -46,7 +46,7 @@ jobs:
           STAGE1_CONCURRENCY: ${{ github.event.inputs.concurrency_input }}
         run: |
           ulimit -n 65535
-          python "脚本/check_cf_asn.py" "${{ github.event.inputs.target_input }}" "${{ github.event.inputs.ports_input }}"
+          python "脚本/check_cf_asn2.py" "${{ github.event.inputs.target_input }}" "${{ github.event.inputs.ports_input }}"
 
       - name: Commit and Push TXT Results
         uses: stefanzweifel/git-auto-commit-action@v5
