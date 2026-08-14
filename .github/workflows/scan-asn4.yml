@@ -54,7 +54,8 @@ jobs:
 
       - name: Run Masscan Probe
         run: |
-          python "脚本/extract_targets.py" "${{ inputs.target_input }}" "${{ inputs.region_input }}"
+          echo "[*] 正在提取与匹配 CIDR 段..."
+          python -c "import sys, json, urllib.request, os, re; target = '${{ inputs.target_input }}'.strip(); raw_region = '${{ inputs.region_input }}'.strip(); asn_clean = target.upper().replace('AS', ''); cidrs = []; aliases = {'hk': ['hk', 'hongkong', '香港'], 'tw': ['tw', 'taiwan', '台湾'], 'jp': ['jp', 'japan', '日本'], 'sg': ['sg', 'singapore', '新加坡'], 'us': ['us', 'usa', '美国'], 'uk': ['uk', 'united kingdom', '英国'], 'kr': ['kr', 'korea', '韩国'], 'de': ['de', 'germany', '德国'], 'fr': ['fr', 'france', '法国'], 'in': ['in', 'india', '印度'], 'th': ['th', 'thailand', '泰国'], 'vn': ['vn', 'vietnam', '越南'], 'my': ['my', 'malaysia', '马来西亚'], 'ph': ['ph', 'philippines', '菲律宾'], 'id': ['id', 'indonesia', '印尼', '印度尼西亚']}; asia_keywords = ['hk', 'tw', 'jp', 'sg', 'kr', 'in', 'th', 'vn', 'my', 'ph', 'id', '香港', '台湾', '日本', '新加坡', '韩国', '亚洲', '印度', '泰国', '越南', '马来西亚', '菲律宾', '印尼']; target_keywords = set(); tokens = re.split(r'[\s,;|]+', raw_region) if raw_region else []; [target_keywords.update(asia_keywords if t.lower() in ['亚洲', 'asia'] else aliases.get(t.lower(), [t.lower()])) for t in tokens if t]; local_paths = [f'优选asn段/{asn_clean}.txt', f'优选asn段/AS{asn_clean}.txt']; found_local = False; [(setattr(sys, 'found_local', True), print(f'[*] 发现本地文件 {p}，筛选条件: {list(target_keywords) or \"[全部]\"}'), [cidrs.extend(re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', line)) for line in open(p, 'r', encoding='utf-8', errors='ignore') if (not target_keywords or any(k in line.lower() for k in target_keywords))]) for p in local_paths if os.path.isfile(p) and not getattr(sys, 'found_local', False)]; print(f'[+] 匹配完成！共导出 CIDR 段: {len(cidrs)} 个'); open('targets.txt', 'w').write('\n'.join(set(cidrs)))"
           
           if [ ! -s targets.txt ]; then
             echo "[-] 未匹配到符合条件的 IP 段，退出扫描！"
@@ -63,7 +64,7 @@ jobs:
 
           PORTS=$(echo "${{ inputs.ports_input }}" | tr ' ' ',')
           echo "[*] 正在运行 Masscan 探活..."
-          sudo masscan -iL targets.txt -p $PORTS --rate ${{ inputs.masscan_rate_input }} --wait 0 -oJ masscan_out.json
+          sudo masscan -iL targets.txt -p $PORTS --rate ${{ inputs.masscan_rate_input }} --wait 0 -oJ masscan_out.json > /dev/null 2>&1
           echo "[+] Masscan 探活完成！"
 
       - name: Run ASN / IP Scan
