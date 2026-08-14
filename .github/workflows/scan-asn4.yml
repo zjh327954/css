@@ -18,7 +18,7 @@ on:
       masscan_rate_input:
         description: 'Masscan 发包速率 (pps，推荐 5000 ~ 15000)'
         required: true
-        default: '3000'
+        default: '5000'
       py_concurrency_input:
         description: 'Python 握手并发数 (单进程并发，推荐 500 ~ 2000)'
         required: true
@@ -63,7 +63,6 @@ jobs:
           asn_clean = target.upper().replace('AS', '')
           cidrs = []
 
-          # 基础映射 (全小写)
           aliases = {
               'hk': ['hk', 'hongkong', '香港'],
               'tw': ['tw', 'taiwan', '台湾'],
@@ -84,7 +83,6 @@ jobs:
 
           asia_keywords = ['hk', 'tw', 'jp', 'sg', 'kr', 'in', 'th', 'vn', 'my', 'ph', 'id', '香港', '台湾', '日本', '新加坡', '韩国', '亚洲', '印度', '泰国', '越南', '马来西亚', '菲律宾', '印尼']
 
-          # 提取关键词
           target_keywords = set()
           if raw_region:
               tokens = re.split(r'[\s,;|]+', raw_region)
@@ -119,7 +117,6 @@ jobs:
                           found_cidrs = re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', line_str)
                           if found_cidrs:
                               if target_keywords:
-                                  # 只要标题中包含任意一个关键词（忽略大小写），就保留
                                   sec_lower = current_section.lower()
                                   if any(k in sec_lower for k in target_keywords):
                                       cidrs.extend(found_cidrs)
