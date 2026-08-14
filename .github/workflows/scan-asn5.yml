@@ -1,4 +1,4 @@
-name: Daily IP Scan & Classify
+name: '每日扫描'
 
 on:
   # 每日定时自动运行 (UTC 时间 18:00，即北京时间凌晨 02:00)
