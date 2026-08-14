@@ -12,9 +12,9 @@ on:
         required: true
         default: '443 8443 2053 2083 2087 2096'
       concurrency_input:
-        description: '扫描并发速率 (单进程并发数，推荐 1000~2000)'
+        description: '扫描并发速率 (同时控制 Masscan pps 发包速率与 Python 并发)'
         required: true
-        default: '1500'
+        default: '10000'
 
 jobs:
   scan:
@@ -73,10 +73,10 @@ jobs:
                   f.write(c + '\n')
           "
           
-          # 2. 格式化端口参数并运行 Masscan（加上 --wait 0 避免无意义等待和日志刷屏）
+          # 2. 将输入的 concurrency_input 动态绑定给 Masscan 的 --rate 速率
           PORTS=$(echo "${{ inputs.ports_input }}" | tr ' ' ',')
-          echo "[*] 正在对目标运行 Masscan 端口高速探活..."
-          sudo masscan -iL targets.txt -p$PORTS --rate 10000 --wait 0 -oJ masscan_out.json || true
+          echo "[*] 正在运行 Masscan 探活 (指定速率: ${{ inputs.concurrency_input }} pps)..."
+          sudo masscan -iL targets.txt -p$PORTS --rate ${{ inputs.concurrency_input }} --wait 0 -oJ masscan_out.json || true
           echo "[+] Masscan 探活完成！"
 
       - name: Run ASN / IP Scan
