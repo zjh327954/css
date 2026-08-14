@@ -121,39 +121,43 @@ def parse_ports(port_str):
 
 
 def build_ip_region_map(target_input, target_region=""):
-    """构建 (IP -> 地区) 的查询映射字典"""
+    """构建 (IP -> 地区/分类标题) 的查询映射字典"""
     ip_region_map = {}
     raw_targets = [t.strip() for t in re.split(r'[\s,;,]+', target_input) if t.strip()]
     mapped_region = REGION_ALIASES.get(target_region.strip().lower(), target_region.strip().lower())
 
     for item in raw_targets:
         asn_clean = item.upper().replace("AS", "")
-        if asn_clean.isdigit():
-            possible_paths = [
-                os.path.join(BASE_DIR, "优选asn段", f"{asn_clean}.txt"),
-                os.path.join(BASE_DIR, "优选asn段", f"AS{asn_clean}.txt")
-            ]
-            for p in possible_paths:
-                if os.path.isfile(p):
-                    try:
-                        with open(p, "r", encoding="utf-8", errors="ignore") as f:
-                            current_region = "未归类"
-                            for line in f:
-                                line = line.strip()
-                                if not line:
+        possible_paths = [
+            os.path.join(BASE_DIR, "优选asn段", f"{asn_clean}.txt"),
+            os.path.join(BASE_DIR, "优选asn段", f"AS{asn_clean}.txt")
+        ]
+        for p in possible_paths:
+            if os.path.isfile(p):
+                try:
+                    with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                        current_region = "未归类"
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            
+                            found_cidrs = re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', line)
+                            if found_cidrs:
+                                if mapped_region and mapped_region not in current_region.lower():
                                     continue
-                                found_cidrs = re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', line)
-                                if found_cidrs:
-                                    if not mapped_region or mapped_region in current_region.lower():
-                                        for c in found_cidrs:
-                                            net = ipaddress.ip_network(c, strict=False)
-                                            for ip in net:
-                                                ip_region_map[str(ip)] = current_region
-                                else:
-                                    current_region = line.strip()
-                    except Exception:
-                        pass
-                    break
+                                for c in found_cidrs:
+                                    try:
+                                        net = ipaddress.ip_network(c, strict=False)
+                                        for ip in net:
+                                            ip_region_map[str(ip)] = current_region
+                                    except Exception:
+                                        pass
+                            else:
+                                current_region = line
+                except Exception as e:
+                    print(f"[-] 读取地区映射失败: {e}", flush=True)
+                break
     return ip_region_map
 
 
@@ -170,7 +174,6 @@ def load_masscan_targets(masscan_json_path, ip_region_map):
             if not content:
                 return targets
             
-            # 兼容 Masscan json 结尾缺逗号或括号的格式
             if not content.endswith(']'):
                 content = content.rstrip(',') + ']'
             
@@ -178,7 +181,7 @@ def load_masscan_targets(masscan_json_path, ip_region_map):
             for entry in data:
                 ip = entry.get('ip')
                 ports = entry.get('ports', [])
-                region = ip_region_map.get(ip, "未知地区")
+                region = ip_region_map.get(ip, "未归类")
                 for p in ports:
                     port = p.get('port')
                     if ip and port:
@@ -325,7 +328,7 @@ async def main():
     masscan_json_path = sys.argv[3] if len(sys.argv) > 3 else "masscan_out.json"
     region_input = sys.argv[4] if len(sys.argv) > 4 else ""
 
-    print(f"\n[*] 正在读取本地地区映射映射表...", flush=True)
+    print(f"\n[*] 正在读取本地分类/地区映射表...", flush=True)
     ip_region_map = build_ip_region_map(target_input, region_input)
 
     print(f"[*] 正在从 Masscan JSON 导入探活结果: {masscan_json_path} ...", flush=True)
@@ -398,7 +401,6 @@ async def main():
     print("\n==================== 扫描结束 ====================", flush=True)
     print(f"最终有效目标总数: {len(final_items)}", flush=True)
 
-    # 将结果按照 地区分组 -> IP 升序 排序
     grouped_results = defaultdict(list)
     for ip, port, region in final_items:
         grouped_results[region].append((ip, port))
@@ -413,17 +415,15 @@ async def main():
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, filename)
 
-    # 写入文件（按国家/地区块格式）
     with open(output_path, "w", encoding="utf-8") as f:
         for region, nodes in grouped_results.items():
-            # 按 IP 升序排序
             sorted_nodes = sorted(nodes, key=lambda x: (ipaddress.ip_address(x[0]), x[1]))
             f.write(f"{region}\n")
             for ip, port in sorted_nodes:
                 f.write(f"{ip}:{port}\n")
-            f.write("\n")  # 地区块之间加换行隔离
+            f.write("\n")
 
-    print(f"\n[+] 最终结果已按国家/地区分类保存至：{output_path}", flush=True)
+    print(f"\n[+] 最终结果已按分类保存至：{output_path}", flush=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
