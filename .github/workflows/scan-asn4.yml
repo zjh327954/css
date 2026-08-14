@@ -1,4 +1,4 @@
-Name: '测试'
+name: '测试'
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
       target_input:
         description: '扫描目标 (支持 ASN 如 AS36002、IP段如 203.66.11.0/20)'
         required: true
-        default: 'AS36002'
+        default: 'AS'
       region_input:
         description: '筛选国家/地区/大洲 (如 亚洲、asia、HK DE、香港 德国，留空提取全部)'
         required: false
@@ -14,15 +14,15 @@ on:
       ports_input:
         description: '需要扫描的端口号 (多个端口用逗号或空格隔开)'
         required: true
-        default: '443 8443 2053 2083 2096'
+        default: '443 8443 2053 2083 2087 2096'
       masscan_rate_input:
         description: 'Masscan 发包速率 (pps，推荐 5000 ~ 15000)'
         required: true
-        default: '10000'
+        default: '5000'
       py_concurrency_input:
         description: 'Python 握手并发数 (单进程并发，推荐 500 ~ 2000)'
         required: true
-        default: '1500'
+        default: '100'
 
 jobs:
   scan:
