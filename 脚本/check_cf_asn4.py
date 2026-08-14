@@ -112,7 +112,6 @@ def build_ip_region_map(target_input, target_region=""):
     """构建 (IP -> 地区) 的查询映射字典"""
     ip_region_map = {}
     raw_targets = [t.strip() for t in re.split(r'[\s,;,]+', target_input) if t.strip()]
-    mapped_region = REGION_ALIASES.get(target_region.strip().lower(), target_region.strip().lower())
 
     for item in raw_targets:
         asn_clean = item.upper().replace("AS", "")
@@ -125,22 +124,31 @@ def build_ip_region_map(target_input, target_region=""):
                 if os.path.isfile(p):
                     try:
                         with open(p, "r", encoding="utf-8", errors="ignore") as f:
-                            current_region = "未归类"
+                            current_region = "未知地区"
+                            region_stack = []
                             for line in f:
-                                line = line.strip()
-                                if not line:
+                                raw_line = line.strip()
+                                if not raw_line:
                                     continue
-                                found_cidrs = re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', line)
+                                
+                                found_cidrs = re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', raw_line)
                                 if found_cidrs:
-                                    if not mapped_region or mapped_region in current_region.lower():
-                                        for c in found_cidrs:
+                                    full_region_label = " ".join(region_stack) if region_stack else current_region
+                                    for c in found_cidrs:
+                                        try:
                                             net = ipaddress.ip_network(c, strict=False)
                                             for ip in net:
-                                                ip_region_map[str(ip)] = current_region
+                                                ip_region_map[str(ip)] = full_region_label
+                                        except Exception:
+                                            pass
                                 else:
-                                    current_region = line
-                    except Exception:
-                        pass
+                                    current_region = raw_line
+                                    if not region_stack:
+                                        region_stack.append(raw_line)
+                                    else:
+                                        region_stack = [region_stack[0], raw_line] if len(region_stack) == 1 else [raw_line]
+                    except Exception as e:
+                        print(f"[-] 读取地区映射文件失败 {p}: {e}", flush=True)
                     break
     return ip_region_map
 
