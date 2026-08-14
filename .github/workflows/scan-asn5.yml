@@ -1,9 +1,9 @@
-name: '测试'
+name: '每日扫描'
 
 on:
   # 1. 每日自动定时扫描 (北京时间每天凌晨 04:00 自动执行)
   schedule:
-    - cron: '0 20 * * *'
+    - cron: '0 23 * * *'
 
   # 2. 手动触发扫描模式
   workflow_dispatch:
