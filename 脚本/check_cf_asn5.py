@@ -60,7 +60,7 @@ CUSTOM_CF_DOMAIN = os.getenv("CUSTOM_CF_DOMAIN", "327954.ccwu.cc")
 
 # 阶段 1：TLS 粗筛
 CF_SNI_1 = "www.cloudflare.com"
-STAGE1_CONCURRENCY = int(os.getenv("STAGE1_CONCURRENCY", "1500"))
+STAGE1_CONCURRENCY = int(os.getenv("STAGE1_CONCURRENCY", "200"))
 STAGE1_TIMEOUT = 2        
 
 # 阶段 2：HTTP 验证
@@ -85,20 +85,32 @@ global_total = 0
 global_step = 0
 global_printed_milestones = None
 
+ASIA_KEYWORDS = [
+    "香港", "日本", "新加坡", "韩国", "台湾", "澳门", "马来西亚", "泰国", "越南",
+    "菲律宾", "印度尼西亚", "印尼", "柬埔寨", "老挝", "缅甸", "文莱", "印度", 
+    "巴基斯坦", "孟加拉", "阿联酋", "迪拜", "土耳其", "沙特", "卡塔尔", "科威特", 
+    "阿曼", "以色列", "哈萨克斯坦", "hk", "hongkong", "jp", "japan", "sg", "singapore", 
+    "kr", "korea", "tw", "taiwan", "mo", "macau"
+]
 
 def silent_exception_handler(loop, context):
     exception = context.get("exception")
     if isinstance(exception, (ConnectionResetError, TimeoutError, OSError, ssl.SSLError)):
         return
 
+def is_asia_region(region_name):
+    """判断地区名称是否属于亚洲"""
+    reg_lower = region_name.lower()
+    return any(kw in reg_lower for kw in ASIA_KEYWORDS)
 
 def parse_asn_file(file_path, ip_info_map):
-    """解析单个 ASN 文本文件（按移动/联通与地区标签提取 IP 归属）"""
+    """解析单个 ASN 文本文件，完美支持 运营商 -> 地区 -> CIDR 多层缩进结构"""
     if not os.path.isfile(file_path):
         return
 
     current_isp = "未知运营商"
     current_region = "未知地区"
+    is_asia = False
 
     try:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -107,57 +119,51 @@ def parse_asn_file(file_path, ip_info_map):
                 if not raw_line:
                     continue
 
-                # 判断 ISP 标记
+                # 1. 判断 ISP 标记
                 if raw_line in ["移动", "联通", "电信"]:
                     current_isp = raw_line
                     continue
 
-                # 判断 CIDR 还是 地区标记
+                # 2. 提取 CIDR
                 found_cidrs = re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', raw_line)
+                
                 if found_cidrs:
-                    for c in found_cidrs:
-                        try:
-                            net = ipaddress.ip_network(c, strict=False)
-                            for ip in net:
-                                ip_info_map[str(ip)] = (current_isp, current_region)
-                        except Exception:
-                            pass
+                    # 只有当前地区处于亚洲关键字范围内时，才写入 IP 字典
+                    if is_asia:
+                        for c in found_cidrs:
+                            try:
+                                net = ipaddress.ip_network(c, strict=False)
+                                for ip in net:
+                                    ip_info_map[str(ip)] = (current_isp, current_region)
+                            except Exception:
+                                pass
                 else:
-                    # 如果不是 IP 段且不是 ISP，则更新当前地区
+                    # 3. 如果不是 CIDR 也不是 ISP，则为地区标记
                     current_region = raw_line
+                    is_asia = is_asia_region(current_region)
+
     except Exception as e:
         print(f"[-] 解析文件失败 {file_path}: {e}", flush=True)
 
 
 def build_asia_ip_map():
-    """读取 优选asn段/亚洲段.txt，构建 (IP -> (ISP, Region)) 映射表"""
+    """递归遍历 优选asn段 目录下所有的 txt 文件并构建 IP 归属映射"""
     ip_info_map = {}
-    asia_file = os.path.join(ASN_DIR, "亚洲段.txt")
     
-    if not os.path.exists(asia_file):
-        print(f"[-] 警告: 未找到亚洲段定义文件 {asia_file}", flush=True)
+    if not os.path.exists(ASN_DIR):
+        print(f"[-] 警告: 未找到 ASN 目录 {ASN_DIR}", flush=True)
         return ip_info_map
 
-    print(f"[*] 正在读取亚洲段配置: {asia_file}", flush=True)
+    print(f"[*] 正在扫描并解析 '{ASN_DIR}' 目录下所有 txt 文件中的亚洲段...", flush=True)
     
-    # 支持 亚洲段.txt 中直接存 IP/地区 或 存引用的 ASN 文件列表（如 206300.txt）
-    with open(asia_file, "r", encoding="utf-8", errors="ignore") as f:
-        lines = [line.strip() for line in f if line.strip()]
+    # 自动加载 优选asn段/ 目录下的每一个 .txt 文件 (包括 140227.txt 等所有文件)
+    for root, _, files in os.walk(ASN_DIR):
+        for file in files:
+            if file.endswith(".txt"):
+                file_path = os.path.join(root, file)
+                parse_asn_file(file_path, ip_info_map)
 
-    # 尝试解析 亚洲段.txt 本身
-    parse_asn_file(asia_file, ip_info_map)
-
-    # 同时也尝试把里面的行当作文件/ASN 编号来加载
-    for line in lines:
-        clean_name = line.replace(".txt", "").replace("AS", "").strip()
-        possible_paths = [
-            os.path.join(ASN_DIR, f"{clean_name}.txt"),
-            os.path.join(ASN_DIR, f"AS{clean_name}.txt")
-        ]
-        for p in possible_paths:
-            if os.path.isfile(p):
-                parse_asn_file(p, ip_info_map)
-
+    print(f"[+] 亚洲 IP 字典构建完成，已加载 {len(ip_info_map):,} 个 IP 的归属信息。", flush=True)
     return ip_info_map
 
 
@@ -329,7 +335,6 @@ def save_results_by_region_and_isp(final_items):
     """按地区分类（香港、日本、新加坡、其他），并且移动在前、联通在后写入"""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    # 4 个目标文件分类容器
     category_map = {
         "香港": defaultdict(list),
         "日本": defaultdict(list),
@@ -338,7 +343,6 @@ def save_results_by_region_and_isp(final_items):
     }
 
     for ip, port, isp, region in final_items:
-        # 判断属于哪个文件
         file_key = "其他"
         if "香港" in region or "hk" in region.lower() or "hongkong" in region.lower():
             file_key = "香港"
@@ -347,16 +351,13 @@ def save_results_by_region_and_isp(final_items):
         elif "新加坡" in region or "sg" in region.lower() or "singapore" in region.lower():
             file_key = "新加坡"
 
-        # 分类存储 (key: ISP, value: [(ip, port)])
         category_map[file_key][isp].append((ip, port))
 
-    # 定义 ISP 优先级：移动在前，联通在后，其余补尾
     isp_priority = ["移动", "联通"]
 
     for cat_name, isps_dict in category_map.items():
         file_path = os.path.join(OUTPUT_DIR, f"{cat_name}.txt")
         
-        # 收集所有用到的 ISP 列表，保证 移动->联通->其他 的次序
         all_isps = list(isps_dict.keys())
         sorted_isps = [isp for isp in isp_priority if isp in all_isps]
         for isp in all_isps:
@@ -369,7 +370,6 @@ def save_results_by_region_and_isp(final_items):
                 if not nodes:
                     continue
                 
-                # 按 IP 地址排序
                 sorted_nodes = sorted(nodes, key=lambda x: (ipaddress.ip_address(x[0]), x[1]))
                 
                 f.write(f"[{isp}]\n")
