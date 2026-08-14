@@ -58,8 +58,6 @@ def optimize_system_limits():
                 print(f"[+] 内核参数已优化: {path} -> {value}", flush=True)
             except Exception as e:
                 print(f"[-] 设置 {path} 失败: {e}", flush=True)
-    else:
-        print("[!] 提示: 当前非 Root 用户，跳过 sysctl 内核参数优化（若在 GitHub Actions 中默认是 Root）", flush=True)
 
 optimize_system_limits()
 
@@ -75,7 +73,6 @@ DEFAULT_TARGETS = os.getenv("TARGET_LIST", os.getenv("ASN_LIST", "AS36002"))
 DEFAULT_PORTS = "443, 8443, 2053, 2083, 2096"
 CUSTOM_CF_DOMAIN = os.getenv("CUSTOM_CF_DOMAIN", "327954.ccwu.cc")
 
-STAGE0_TIMEOUT = 0.8     # TCP 建连超短超时
 CF_SNI_1 = "www.cloudflare.com"
 STAGE1_CONCURRENCY = int(os.getenv("STAGE1_CONCURRENCY", "1500"))   # 单进程并发数
 STAGE1_TIMEOUT = 2        # 超时时间
@@ -123,150 +120,74 @@ def parse_ports(port_str):
     return sorted(list(ports)) if ports else [443, 8443, 2053, 2083, 2096]
 
 
-@lru_cache(maxsize=64)
-def get_ips_from_asn_sync(asn_clean, target_region=""):
-    """读取包含地区名的 txt 文件，返回 (IP, 地区) 的列表"""
-    cidrs_with_region = []
-    local_path = None
-
-    raw_filter = target_region.strip().lower() if target_region else ""
-    mapped_region = REGION_ALIASES.get(raw_filter, raw_filter)
-
-    possible_paths = [
-        os.path.join(BASE_DIR, "优选asn段", f"{asn_clean}.txt"),
-        os.path.join(BASE_DIR, "优选asn段", f"AS{asn_clean}.txt")
-    ]
-
-    for p in possible_paths:
-        if os.path.isfile(p):
-            local_path = p
-            break
-
-    if local_path:
-        print(f"\n[+] 【成功读取本地文件】: {local_path}", flush=True)
-        if mapped_region:
-            print(f"[*] 正在按地区匹配: '{target_region}' (过滤关键词: '{mapped_region}')", flush=True)
-        else:
-            print(f"[*] 未指定地区过滤，读取全部 IP 段", flush=True)
-
-        try:
-            with open(local_path, "r", encoding="utf-8", errors="ignore") as f:
-                current_region = "未归类"
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    
-                    found_cidrs = re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', line)
-                    if found_cidrs:
-                        if not mapped_region or mapped_region in current_region.lower():
-                            for c in found_cidrs:
-                                cidrs_with_region.append((c, current_region))
-                    else:
-                        current_region = line.strip()
-
-            print(f"[+] 从本地文件中解析出 {len(cidrs_with_region)} 个符合条件的 IP 段", flush=True)
-        except Exception as e:
-            print(f"[-] 读取本地文件 {local_path} 失败: {e}", flush=True)
-    else:
-        print(f"\n[!] 未在 '优选asn段' 目录下找到 {asn_clean}.txt，正在发起网络 API 提取 AS{asn_clean}...", flush=True)
-
-    # 网络 API 降级提取 (标记为 未归类)
-    if not cidrs_with_region and not mapped_region:
-        import urllib.request
-        fallback_cidrs = []
-        try:
-            ripe_url = f"https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{asn_clean}"
-            req = urllib.request.Request(ripe_url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=8) as response:
-                data = json.loads(response.read().decode())
-                prefixes = data.get("data", {}).get("prefixes", [])
-                for p in prefixes:
-                    prefix = p.get("prefix")
-                    if prefix and ":" not in prefix:
-                        fallback_cidrs.append(prefix)
-        except Exception:
-            pass
-
-        if not fallback_cidrs:
-            try:
-                bgp_url = f"https://api.bgpview.io/asn/{asn_clean}/prefixes"
-                req = urllib.request.Request(bgp_url, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req, timeout=8) as response:
-                    data = json.loads(response.read().decode())
-                    ipv4_prefixes = data.get("data", {}).get("ipv4_prefixes", [])
-                    for p in ipv4_prefixes:
-                        prefix = p.get("prefix")
-                        if prefix:
-                            fallback_cidrs.append(prefix)
-            except Exception:
-                pass
-        
-        for c in fallback_cidrs:
-            cidrs_with_region.append((c, "未归类"))
-
-    ip_region_list = []
-    for cidr, reg in cidrs_with_region:
-        try:
-            net = ipaddress.ip_network(cidr, strict=False)
-            if net.prefixlen >= 31:
-                ip_region_list.extend([(str(ip), reg) for ip in net])
-            else:
-                ip_region_list.extend([(str(ip), reg) for ip in net.hosts()])
-        except Exception:
-            continue
-
-    return ip_region_list
-
-
-async def parse_targets_async(input_str, target_region=""):
-    loop = asyncio.get_running_loop()
-    raw_targets = [t.strip() for t in re.split(r'[\s,;,]+', input_str) if t.strip()]
-    all_ip_tuples = []
+def build_ip_region_map(target_input, target_region=""):
+    """构建 (IP -> 地区) 的查询映射字典"""
+    ip_region_map = {}
+    raw_targets = [t.strip() for t in re.split(r'[\s,;,]+', target_input) if t.strip()]
+    mapped_region = REGION_ALIASES.get(target_region.strip().lower(), target_region.strip().lower())
 
     for item in raw_targets:
-        try:
-            net = ipaddress.ip_network(item, strict=False)
-            if net.prefixlen >= 31:
-                all_ip_tuples.extend([(str(ip), "自定义段") for ip in net])
-            else:
-                all_ip_tuples.extend([(str(ip), "自定义段") for ip in net.hosts()])
-            continue
-        except ValueError:
-            pass
-
         asn_clean = item.upper().replace("AS", "")
         if asn_clean.isdigit():
-            ips_with_reg = await loop.run_in_executor(None, get_ips_from_asn_sync, asn_clean, target_region)
-            all_ip_tuples.extend(ips_with_reg)
+            possible_paths = [
+                os.path.join(BASE_DIR, "优选asn段", f"{asn_clean}.txt"),
+                os.path.join(BASE_DIR, "优选asn段", f"AS{asn_clean}.txt")
+            ]
+            for p in possible_paths:
+                if os.path.isfile(p):
+                    try:
+                        with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                            current_region = "未归类"
+                            for line in f:
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                found_cidrs = re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', line)
+                                if found_cidrs:
+                                    if not mapped_region or mapped_region in current_region.lower():
+                                        for c in found_cidrs:
+                                            net = ipaddress.ip_network(c, strict=False)
+                                            for ip in net:
+                                                ip_region_map[str(ip)] = current_region
+                                else:
+                                    current_region = line.strip()
+                    except Exception:
+                        pass
+                    break
+    return ip_region_map
 
-    # 去重并打乱
-    unique_map = {}
-    for ip, reg in all_ip_tuples:
-        if ip not in unique_map:
-            unique_map[ip] = reg
+
+def load_masscan_targets(masscan_json_path, ip_region_map):
+    """读取并解析 Masscan 输出的 JSON 文件"""
+    targets = []
+    if not os.path.exists(masscan_json_path):
+        print(f"[-] 错误：找不到 Masscan 输出文件: {masscan_json_path}", flush=True)
+        return targets
+
+    try:
+        with open(masscan_json_path, 'r', encoding='utf-8') as f:
+            content = f.read().strip()
+            if not content:
+                return targets
             
-    unique_ips = list(unique_map.items())
-    random.shuffle(unique_ips)
-    return unique_ips
+            # 兼容 Masscan json 结尾缺逗号或括号的格式
+            if not content.endswith(']'):
+                content = content.rstrip(',') + ']'
+            
+            data = json.loads(content)
+            for entry in data:
+                ip = entry.get('ip')
+                ports = entry.get('ports', [])
+                region = ip_region_map.get(ip, "未知地区")
+                for p in ports:
+                    port = p.get('port')
+                    if ip and port:
+                        targets.append((ip, int(port), region))
+    except Exception as e:
+        print(f"[-] 解析 Masscan JSON 失败: {e}", flush=True)
 
-
-async def check_tcp_open_async(ip, port, timeout_val, sem):
-    async with sem:
-        writer = None
-        try:
-            conn = asyncio.open_connection(ip, port)
-            reader, writer = await asyncio.wait_for(conn, timeout=timeout_val)
-            return True
-        except Exception:
-            return False
-        finally:
-            if writer:
-                writer.close()
-                try:
-                    writer.transport.abort()
-                except Exception:
-                    pass
+    random.shuffle(targets)
+    return targets
 
 
 def match_domain_in_cert(sni_domain, cert_str):
@@ -387,7 +308,7 @@ def _process_worker_stage1(targets_chunk):
                     if global_printed_milestones[milestone_idx - 1] == 0:
                         global_printed_milestones[milestone_idx - 1] = 1
                         pct = min(100, milestone_idx * 10)
-                        print(f"  [第一阶段全局进度] {pct}% ({curr:,}/{global_total:,}) | 已通过: {passed:,} 个", flush=True)
+                        print(f"  [第一阶段 TLS 验证进度] {pct}% ({curr:,}/{global_total:,}) | 已通过: {passed:,} 个", flush=True)
 
             return res
 
@@ -401,41 +322,24 @@ def _process_worker_stage1(targets_chunk):
 async def main():
     target_input = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_TARGETS
     ports_input = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_PORTS
-    region_input = sys.argv[3] if len(sys.argv) > 3 else ""
+    masscan_json_path = sys.argv[3] if len(sys.argv) > 3 else "masscan_out.json"
+    region_input = sys.argv[4] if len(sys.argv) > 4 else ""
 
-    target_ports = parse_ports(ports_input)
-    
-    print(f"\n[*] 正在解析目标地址/ASN: {target_input} (筛选国家/地区: '{region_input or '全部'}') ...", flush=True)
-    all_ips_with_region = await parse_targets_async(target_input, region_input)
+    print(f"\n[*] 正在读取本地地区映射映射表...", flush=True)
+    ip_region_map = build_ip_region_map(target_input, region_input)
 
-    if not all_ips_with_region:
-        print("[-] 未能获取到任何待测 IP，程序退出。", flush=True)
-        return
-
-    # 包含 (IP, Port, Region) 三元组
-    targets = [(ip, port, reg) for ip, reg in all_ips_with_region for port in target_ports]
-    total_targets_count = len(targets)
-    
-    total_concurrency = STAGE1_CONCURRENCY * CPU_CORES
-    print(f"[*] 引擎初始化：uvloop={UVLOOP_ENABLED} | 进程数={CPU_CORES} | 单进程并发={STAGE1_CONCURRENCY} | 总并发数={total_concurrency}", flush=True)
-    print(f"[*] 解析完成：{len(all_ips_with_region)} 个 IP × {len(target_ports)} 个端口 = 共 {total_targets_count:,} 个测试目标。", flush=True)
-
-    # ==================== 0. TCP 极速端口开放检测 ====================
-    sem_tcp = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
-    print(f"\n[0/3 阶段零 TCP 端口探活] 正在对 {total_targets_count:,} 个目标进行极速端口探测...", flush=True)
-    tasks0 = [check_tcp_open_async(ip, port, STAGE0_TIMEOUT, sem_tcp) for ip, port, reg in targets]
-    res0 = await asyncio.gather(*tasks0)
-    pass_0 = [targets[i] for i, ok in enumerate(res0) if ok]
-    
-    print(f"[+] TCP 端口探活完成！开放端口目标: {len(pass_0):,} 个 (已过滤掉 {total_targets_count - len(pass_0):,} 个关闭端口)\n", flush=True)
+    print(f"[*] 正在从 Masscan JSON 导入探活结果: {masscan_json_path} ...", flush=True)
+    pass_0 = load_masscan_targets(masscan_json_path, ip_region_map)
 
     if not pass_0:
-        print("[-] 无任何开放端口，程序退出。", flush=True)
+        print("[-] Masscan 结果为空，无任何开放端口目标，程序退出。", flush=True)
         return
 
     # ==================== 1. 多进程 TLS 粗筛 ====================
     total_targets_count = len(pass_0)
-    print(f"[1/3 第一阶段 TLS 探测] 多进程并行并发中 (待测开放目标: {total_targets_count:,} 个)...", flush=True)
+    total_concurrency = STAGE1_CONCURRENCY * CPU_CORES
+    print(f"[*] 引擎初始化：uvloop={UVLOOP_ENABLED} | 进程数={CPU_CORES} | 单进程并发={STAGE1_CONCURRENCY} | 总并发数={total_concurrency}", flush=True)
+    print(f"\n[1/3 第一阶段 TLS 探测] 多进程并行校验 (Masscan 探活开放目标: {total_targets_count:,} 个)...", flush=True)
     
     num_chunks = CPU_CORES * 4
     chunk_size = max(1, total_targets_count // num_chunks)
