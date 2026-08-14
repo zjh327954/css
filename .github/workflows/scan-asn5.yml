@@ -19,11 +19,11 @@ on:
       masscan_rate_input:
         description: 'Masscan 发包速率 (pps，推荐 5000 ~ 15000)'
         required: true
-        default: '5000'
+        default: '1000'
       py_concurrency_input:
         description: 'Python 握手并发数 (单进程并发，推荐 500 ~ 2000)'
         required: true
-        default: '200'
+        default: '500'
 
 jobs:
   scan:
@@ -57,22 +57,76 @@ jobs:
         run: |
           rm -f masscan_out.json targets.txt
           
-          # 提取 `优选asn段` 文件夹下所有 txt 中的 CIDR 网段写入 targets.txt
+          # 1. 精准提取 `优选asn段/*.txt` 中的亚洲 CIDR 网段
           python -c "
           import os, glob, re
 
+          # 亚洲国家与地区识别关键词
+          ASIA_KEYWORDS = [
+              '香港', 'HK', 'Hong Kong',
+              '日本', 'JP', 'Japan',
+              '新加坡', 'SG', 'Singapore',
+              '台湾', 'TW', 'Taiwan',
+              '韩国', 'KR', 'Korea',
+              '马来西亚', 'MY', 'Malaysia',
+              '泰国', 'TH', 'Thailand',
+              '越南', 'VN', 'Vietnam',
+              '菲律宾', 'PH', 'Philippines',
+              '印度尼西亚', '印尼', 'ID', 'Indonesia',
+              '印度', 'IN', 'India',
+              '阿联酋', '迪拜', 'AE', 'Dubai', 'UAE',
+              '土耳其', 'TR', 'Turkey'
+          ]
+
+          user_region = '${{ inputs.region_input || '' }}'.strip()
+
+          def is_target_region(label):
+              label_upper = label.upper()
+              if user_region:
+                  return user_region.upper() in label_upper
+              for kw in ASIA_KEYWORDS:
+                  if kw.upper() in label_upper:
+                      return True
+              return False
+
           asn_dir = '优选asn段'
           cidrs = []
+
           if os.path.exists(asn_dir):
               for p in glob.glob(os.path.join(asn_dir, '*.txt')):
-                  with open(p, 'r', encoding='utf-8', errors='ignore') as f:
-                      for line in f:
-                          found = re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', line)
-                          if found:
-                              cidrs.extend(found)
+                  try:
+                      with open(p, 'r', encoding='utf-8', errors='ignore') as f:
+                          operator = ''
+                          country_region = ''
+                          for line in f:
+                              raw_line = line.rstrip()
+                              if not raw_line.strip():
+                                  continue
+                              
+                              indent_level = len(raw_line) - len(raw_line.lstrip())
+                              clean_line = raw_line.strip()
+                              found = re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', clean_line)
+
+                              if not found:
+                                  if indent_level == 0:
+                                      if clean_line in ['移动', '联通', '电信']:
+                                          operator = clean_line
+                                          country_region = ''
+                                      else:
+                                          operator = ''
+                                          country_region = clean_line
+                                  elif indent_level in [2, 4]:
+                                      country_region = clean_line
+                              else:
+                                  full_label = f'{operator} {country_region}'.strip() if operator else country_region
+                                  if is_target_region(country_region) or is_target_region(full_label):
+                                      cidrs.extend(found)
+                  except Exception as e:
+                      print(f'[-] 读取失败 {p}: {e}')
 
           cidrs = list(dict.fromkeys(cidrs))
-          print(f'[+] 自动合并 `优选asn段` 下所有文件，共计提取到 {len(cidrs)} 个 CIDR 网段写入 targets.txt')
+          filter_tag = user_region if user_region else '默认亚洲'
+          print(f'[+] 精准提取 [{filter_tag}] CIDR 完成，共提取到 {len(cidrs)} 个网段写入 targets.txt')
           
           with open('targets.txt', 'w', encoding='utf-8') as f:
               for c in cidrs:
