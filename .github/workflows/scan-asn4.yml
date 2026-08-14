@@ -6,7 +6,7 @@ on:
       target_input:
         description: '扫描目标 (支持 ASN 如 AS36002、IP段如 203.66.11.0/20)'
         required: true
-        default: 'AS36002'
+        default: 'AS'
       region_input:
         description: '筛选国家/地区/大洲 (如 亚洲、asia、HK DE、香港 德国，留空提取全部)'
         required: false
@@ -18,11 +18,11 @@ on:
       masscan_rate_input:
         description: 'Masscan 发包速率 (pps，推荐 5000 ~ 15000)'
         required: true
-        default: '10000'
+        default: '3000'
       py_concurrency_input:
         description: 'Python 握手并发数 (单进程并发，推荐 500 ~ 2000)'
         required: true
-        default: '1500'
+        default: '100'
 
 jobs:
   scan:
@@ -54,7 +54,7 @@ jobs:
 
       - name: Run Masscan Probe
         run: |
-          # 1. 读取本地 优选asn段/XX.txt，精准提取 IP 段
+          echo "[*] 读取本地 优选asn段/XX.txt，精准提取 IP 段..."
           python -c "
           import sys, json, urllib.request, os, re
 
@@ -152,13 +152,11 @@ jobs:
           print(f'[+] 过滤完成！成功向 targets.txt 写入 {len(unique_cidrs)} 个精准 CIDR 段')
           "
           
-          # 2. 判断是否有目标
           if [ ! -s targets.txt ]; then
             echo "[-] 未匹配到符合条件的 IP 段，退出扫描！"
             exit 1
           fi
 
-          # 3. 运行 Masscan 探活
           PORTS=$(echo "${{ inputs.ports_input }}" | tr ' ' ',')
           echo "[*] 正在运行 Masscan 探活 (速率: ${{ inputs.masscan_rate_input }} pps)..."
           
