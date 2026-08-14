@@ -86,7 +86,7 @@ jobs:
           CUSTOM_CF_DOMAIN: "327954.ccwu.cc"
         run: |
           echo "[*] 开始启动 Python 验证脚本..."
-          python3 daily_scan.py masscan_out.json
+          python3 daily_scan5.py masscan_out.json
 
       - name: 提交并推送结果到 GitHub 仓库
         run: |
