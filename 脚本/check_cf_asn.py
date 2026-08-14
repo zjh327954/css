@@ -17,8 +17,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ==================== 0. 自动优化系统内核与文件句柄限制 ====================
 def optimize_system_limits():
-    """自动化调优系统文件句柄限制 (ulimit) 与内核网络参数 (sysctl)"""
-    print("[*] 正在尝试优化系统内核与文件描述符限制...", flush=True)
+    """自动化调优系统文件句柄限制 (ulimit)"""
     try:
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         target_limit = max(65535, hard)
@@ -26,7 +25,7 @@ def optimize_system_limits():
         new_soft, new_hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         print(f"[+] 文件描述符上限 (ulimit) 调整成功: {new_soft}", flush=True)
     except Exception as e:
-        print(f"[-] 调整 ulimit 失败 (可能无权限): {e}", flush=True)
+        print(f"[-] 调整 ulimit 失败: {e}", flush=True)
 
 optimize_system_limits()
 
@@ -38,8 +37,11 @@ try:
 except ImportError:
     UVLOOP_ENABLED = False
 
-# ==================== 配置区域 ====================
-DEFAULT_TARGETS = os.getenv("TARGET_LIST", "AS36002")
+# ==================== 参数解析与环境变量 ====================
+DEFAULT_TARGETS = sys.argv[1] if len(sys.argv) > 1 else os.getenv("TARGET_LIST", "AS203923")
+PORTS_INPUT = sys.argv[2] if len(sys.argv) > 2 else "443 8443"
+MASSCAN_JSON_FILE = sys.argv[3] if len(sys.argv) > 3 else "masscan_out.json"
+
 CUSTOM_CF_DOMAIN = os.getenv("CUSTOM_CF_DOMAIN", "327954.ccwu.cc")
 
 # 阶段 1：TLS 粗筛 (www.cloudflare.com)
@@ -72,15 +74,17 @@ global_step = 0
 global_printed_milestones = None
 
 def load_targets_from_masscan(json_file):
-    """解析 Masscan 生成的 JSON 文件，直接拿到真正开放的 IP:PORT"""
+    """读取 Masscan 生成的 JSON 结果，解析开放的 IP 和 Port"""
     targets = []
     if not os.path.exists(json_file):
+        print(f"[-] 找不到 Masscan 文件: {json_file}", flush=True)
         return targets
         
     try:
         with open(json_file, 'r', encoding='utf-8') as f:
             content = f.read().strip()
-            # 兼容 Masscan 导出文件可能存在的格式缺陷
+            if not content:
+                return targets
             if content.endswith(','):
                 content = content[:-1]
             if not content.endswith(']'):
@@ -92,9 +96,9 @@ def load_targets_from_masscan(json_file):
                 for p in item.get("ports", []):
                     port = p.get("port")
                     if ip and port:
-                        targets.append((ip, port))
+                        targets.append((ip, int(port)))
     except Exception as e:
-        print(f"[-] 解析 Masscan 结果 JSON 失败: {e}", flush=True)
+        print(f"[-] 解析 Masscan 导出文件失败: {e}", flush=True)
         
     return targets
 
@@ -237,10 +241,8 @@ async def main():
     loop = asyncio.get_running_loop()
     loop.set_exception_handler(silent_exception_handler)
 
-    masscan_json = sys.argv[1] if len(sys.argv) > 1 else "masscan_out.json"
-
-    print(f"\n[*] 正在加载 Masscan 导出的端口数据: {masscan_json} ...", flush=True)
-    targets = load_targets_from_masscan(masscan_json)
+    print(f"[*] 正在加载 Masscan 导出的端口数据: {MASSCAN_JSON_FILE} ...", flush=True)
+    targets = load_targets_from_masscan(MASSCAN_JSON_FILE)
 
     if not targets:
         print("[-] 未能在 Masscan 导出文件中读取到任何开放端口目标，程序退出。", flush=True)
@@ -260,7 +262,7 @@ async def main():
     global_lock_var = manager.Lock()
     global_printed_array = manager.Array('i', [0] * 10) 
 
-    # 1. 多进程 TLS 粗筛
+    # 1. 第一阶段 TLS 证书匹配
     print(f"\n[1/3 第一阶段 TLS 证书匹配] 多进程并行校验中...", flush=True)
     num_chunks = CPU_CORES * 4
     chunk_size = max(1, total_targets_count // num_chunks)
@@ -285,8 +287,8 @@ async def main():
 
     sem = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
 
-    # 2. HTTP 校验
-    print(f"[2/3 第二阶段 HTTP 校验] 正在快速校验 {len(pass_1)} 个候选目标...", flush=True)
+    # 2. 第二阶段 HTTP 校验
+    print(f"[2/3 第二阶段 HTTP 校验] 正在校验 {len(pass_1)} 个候选目标...", flush=True)
     tasks2 = [check_http_async(ip, port, CF_HOST_TEST, STAGE2_TIMEOUT, sem) for ip, port in pass_1]
     res2 = await asyncio.gather(*tasks2)
     pass_2 = [pass_1[i] for i, ok in enumerate(res2) if ok]
@@ -296,7 +298,7 @@ async def main():
         print("[-] 无有效目标通过第二阶段。", flush=True)
         return
 
-    # 3. 自定义托管域名校验
+    # 3. 第三阶段 自定义托管域名校验
     final_items = pass_2
     if CUSTOM_CF_DOMAIN and CUSTOM_CF_DOMAIN.strip():
         domain = CUSTOM_CF_DOMAIN.strip()
@@ -308,10 +310,10 @@ async def main():
 
     final_items = sorted(final_items, key=lambda x: (ipaddress.ip_address(x[0]), x[1]))
 
-    # 导出保存
+    # 保存文件
     clean_input = re.sub(r'[^\w\.-]', '_', DEFAULT_TARGETS.strip())
     filename = f"{clean_input[:30]}.txt"
-    output_dir = os.path.join(BASE_DIR, "优选反代ip")
+    output_dir = os.path.join(BASE_DIR, "..", "优选反代ip") if os.path.basename(BASE_DIR) == "脚本" else os.path.join(BASE_DIR, "优选反代ip")
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, filename)
 
