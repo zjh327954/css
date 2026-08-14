@@ -6,15 +6,19 @@ on:
       target_input:
         description: '扫描目标 (支持 ASN 如 AS203923 或 IP段如 203.66.11.0/20)'
         required: true
-        default: 'AS203923'
+        default: 'AS'
       ports_input:
         description: '需要扫描的端口号 (多个端口用空格或逗号隔开，如 443 8443 或 1-65535)'
         required: true
         default: '443 8443 2053 2083 2087 2096'
-      concurrency_input:
-        description: '扫描并发速率 (控制 Masscan pps 发包速率与 Python 并发)'
+      masscan_rate_input:
+        description: 'Masscan 发包速率 (pps，推荐 5000 ~ 15000)'
         required: true
-        default: '10000'
+        default: '3000'
+      py_concurrency_input:
+        description: 'Python 握手并发数 (单进程并发，推荐 500 ~ 2000)'
+        required: true
+        default: '100'
 
 jobs:
   scan:
@@ -73,14 +77,14 @@ jobs:
                   f.write(c + '\n')
           "
           
-          # 2. 动态捕获 Masscan 输出，只在每 10% 阶段打印一行日志
+          # 2. 传入 masscan_rate_input 独立控制探活发包速率，每 10% 打印进度
           PORTS=$(echo "${{ inputs.ports_input }}" | tr ' ' ',')
-          echo "[*] 正在运行 Masscan 探活 (速率: ${{ inputs.concurrency_input }} pps)..."
+          echo "[*] 正在运行 Masscan 探活 (设定发包速率: ${{ inputs.masscan_rate_input }} pps)..."
           
           python -c "
           import subprocess, sys, re
 
-          cmd = ['sudo', 'masscan', '-iL', 'targets.txt', '-p', '$PORTS', '--rate', '${{ inputs.concurrency_input }}', '--wait', '0', '-oJ', 'masscan_out.json']
+          cmd = ['sudo', 'masscan', '-iL', 'targets.txt', '-p', '$PORTS', '--rate', '${{ inputs.masscan_rate_input }}', '--wait', '0', '-oJ', 'masscan_out.json']
           process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
 
           last_milestone = 0
@@ -103,7 +107,7 @@ jobs:
       - name: Run ASN / IP Scan
         env:
           CUSTOM_CF_DOMAIN: ${{ secrets.CUSTOM_CF_DOMAIN }}
-          STAGE1_CONCURRENCY: ${{ inputs.concurrency_input }}
+          STAGE1_CONCURRENCY: ${{ inputs.py_concurrency_input }}
         run: |
           ulimit -n 65535
           python "脚本/check_cf_asn.py" "${{ inputs.target_input }}" "${{ inputs.ports_input }}" masscan_out.json
