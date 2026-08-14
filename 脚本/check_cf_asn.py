@@ -219,24 +219,25 @@ def match_domain_in_cert(sni_domain, cert_str):
     return False
 
 
-async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
-    """阶段一/阶段三：两阶段异步 TLS 探测（先 TCP 探活，后 TLS 握手）"""
+async def check_tls_sni_async(ip, port, sni, timeout_val, sem, skip_tcp_check=False):
+    """异步 TLS 探测 (支持阶段一快速 TCP 探活，第三阶段直接握手)"""
     async with sem:
-        # 1. 轻量级 TCP 快速探活
-        try:
-            _, tcp_writer = await asyncio.wait_for(
-                asyncio.open_connection(ip, port),
-                timeout=0.8
-            )
-            tcp_writer.close()
+        if not skip_tcp_check:
+            # 轻量级 TCP 快速探活
             try:
-                await tcp_writer.wait_closed()
+                _, tcp_writer = await asyncio.wait_for(
+                    asyncio.open_connection(ip, port),
+                    timeout=0.8
+                )
+                tcp_writer.close()
+                try:
+                    await tcp_writer.wait_closed()
+                except Exception:
+                    pass
             except Exception:
-                pass
-        except Exception:
-            return False
+                return False
 
-        # 2. 端口开放后再建立 TLS 握手
+        # TLS 握手
         writer = None
         try:
             conn = asyncio.open_connection(ip, port, ssl=SSL_CTX, server_hostname=sni)
@@ -332,7 +333,7 @@ def _process_worker_stage1(targets_chunk):
         sem = asyncio.Semaphore(STAGE1_CONCURRENCY)
 
         async def worker(ip, port):
-            res = await check_tls_sni_async(ip, port, CF_SNI_1, STAGE1_TIMEOUT, sem)
+            res = await check_tls_sni_async(ip, port, CF_SNI_1, STAGE1_TIMEOUT, sem, skip_tcp_check=False)
             
             with global_lock:
                 global_counter.value += 1
@@ -403,7 +404,7 @@ async def main():
 
     total_valid_count = 0
 
-    # 批次目标生成器 (懒加载生成目标，极度节省内存)
+    # 批次目标生成器
     def target_generator():
         for ip in all_ips:
             for port in target_ports:
@@ -411,19 +412,17 @@ async def main():
 
     gen = target_generator()
 
-    # ==================== 创建【全量共享内存计数器】 ====================
-    # 放置在批次循环外部，保证进度条以【全量总数】为准一路走到 100%
+    # 创建全量共享内存计数器
     manager = multiprocessing.Manager()
-    global_counter_var = manager.Value('i', 0)        # 全局已测试总数
-    global_pass_counter_var = manager.Value('i', 0)   # 全局粗筛通过总数
+    global_counter_var = manager.Value('i', 0)        
+    global_pass_counter_var = manager.Value('i', 0)   
     global_lock_var = manager.Lock()
-    global_printed_array = manager.Array('i', [0] * 10) # 记录 10% ~ 100% 的打印标记
+    global_printed_array = manager.Array('i', [0] * 10) 
 
     print(f"[1/3 第一阶段 TLS 探测] 多进程并行并发中...", flush=True)
 
     # ==================== 开始分批循环扫描 ====================
     for batch_idx in range(1, total_batches + 1):
-        # 提取当前批次的目标列表
         current_batch = []
         for _ in range(BATCH_SIZE):
             try:
@@ -442,7 +441,6 @@ async def main():
         chunks = [current_batch[i:i + chunk_size] for i in range(0, batch_len, chunk_size)]
 
         pass_1 = []
-        # 将外层的全量 total_targets_count 传给 initializer
         with ProcessPoolExecutor(
             max_workers=CPU_CORES,
             initializer=_init_process_worker,
@@ -454,19 +452,24 @@ async def main():
                 pass_1.extend(res)
 
         if pass_1:
-            # 2. HTTP 校验
             sem = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
+            
+            # 2. HTTP 校验（补齐提示日志）
+            print(f"\n[2/3 第二阶段 HTTP 校验] 正在快速校验 {len(pass_1)} 个候选目标...", flush=True)
             tasks2 = [check_http_async(ip, port, CF_HOST_TEST, STAGE2_TIMEOUT, sem) for ip, port in pass_1]
             res2 = await asyncio.gather(*tasks2)
             pass_2 = [pass_1[i] for i, ok in enumerate(res2) if ok]
+            print(f"[+] 第二阶段完成！可用 301 重定向目标: {len(pass_2)} 个", flush=True)
 
-            # 3. 自定义托管域名反代校验
+            # 3. 自定义托管域名反代校验（补齐提示日志 + 跳过二次 TCP 探活）
             final_items = pass_2
             if pass_2 and CUSTOM_CF_DOMAIN and CUSTOM_CF_DOMAIN.strip():
                 domain = CUSTOM_CF_DOMAIN.strip()
-                tasks3 = [check_tls_sni_async(ip, port, domain, STAGE3_TIMEOUT, sem) for ip, port in pass_2]
+                print(f"[3/3 第三阶段自定义域名校验] 正在校验域名 {domain}...", flush=True)
+                tasks3 = [check_tls_sni_async(ip, port, domain, STAGE3_TIMEOUT, sem, skip_tcp_check=True) for ip, port in pass_2]
                 res3 = await asyncio.gather(*tasks3)
                 final_items = [pass_2[i] for i, ok in enumerate(res3) if ok]
+                print(f"[+] 第三阶段完成！支持自定义托管域名的优选反代 IP: {len(final_items)} 个", flush=True)
 
             # 实时追加保存当前批次合格的目标到文件
             if final_items:
@@ -477,12 +480,12 @@ async def main():
                 
                 total_valid_count += len(final_items)
 
-        # 内存强制回收，防止内存缓慢堆积
+        # 内存强制回收
         del current_batch, chunks, pass_1
         gc.collect()
 
     # ==================== 导出总结 ====================
-    print(f"\n[+] 第一阶段完成！全量匹配 CF 证书目标总量: {global_pass_counter_var.value:,} 个\n", flush=True)
+    print(f"\n[+] 第一阶段完成！全量匹配 CF 证书目标总量: {global_pass_counter_var.value:,} 个", flush=True)
     print("==================== 全局扫描结束 ====================", flush=True)
     print(f"扫描任务已完成！最终共获取有效优选反代目标: {total_valid_count} 个", flush=True)
     print(f"[+] 完整结果已保存至：{output_path}", flush=True)
