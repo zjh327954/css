@@ -23,7 +23,7 @@ on:
       py_concurrency_input:
         description: 'Python 握手并发数 (单进程并发，推荐 500 ~ 2000)'
         required: true
-        default: '500'
+        default: '100'
 
 jobs:
   scan:
