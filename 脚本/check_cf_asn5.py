@@ -9,16 +9,30 @@ import ipaddress
 import random
 import socket
 import multiprocessing
+import glob
 from concurrent.futures import ProcessPoolExecutor
 from collections import defaultdict
 
 # ==================== 路径修复 ====================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..")) if os.path.basename(SCRIPT_DIR) in ["脚本", "scripts"] else SCRIPT_DIR
+BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..")) if os.path.basename(SCRIPT_DIR) == "脚本" else SCRIPT_DIR
 
-# 目标输出目录：根目录/自用
-OUTPUT_DIR = os.path.join(BASE_DIR, "自用")
-ASN_DIR = os.path.join(BASE_DIR, "优选asn段")
+# ==================== 亚洲国家/地区关键词识别清单 ====================
+ASIA_KEYWORDS = [
+    "香港", "HK", "Hong Kong",
+    "日本", "JP", "Japan",
+    "新加坡", "SG", "Singapore",
+    "台湾", "TW", "Taiwan",
+    "韩国", "KR", "Korea",
+    "马来西亚", "MY", "Malaysia",
+    "泰国", "TH", "Thailand",
+    "越南", "VN", "Vietnam",
+    "菲律宾", "PH", "Philippines",
+    "印度尼西亚", "印尼", "ID", "Indonesia",
+    "印度", "IN", "India",
+    "阿联酋", "迪拜", "AE", "Dubai", "UAE",
+    "土耳其", "TR", "Turkey"
+]
 
 # ==================== 0. 自动优化系统内核与文件句柄限制 ====================
 def optimize_system_limits():
@@ -58,26 +72,28 @@ except ImportError:
 MASSCAN_JSON_FILE = sys.argv[1] if len(sys.argv) > 1 else "masscan_out.json"
 CUSTOM_CF_DOMAIN = os.getenv("CUSTOM_CF_DOMAIN", "327954.ccwu.cc")
 
-# 阶段 1：TLS 粗筛
+# 阶段 1：TLS 粗筛 (www.cloudflare.com)
 CF_SNI_1 = "www.cloudflare.com"
-STAGE1_CONCURRENCY = int(os.getenv("STAGE1_CONCURRENCY", "200"))
+STAGE1_CONCURRENCY = int(os.getenv("STAGE1_CONCURRENCY", "1500"))
 STAGE1_TIMEOUT = 2        
 
-# 阶段 2：HTTP 验证
+# 阶段 2：HTTP 验证 Host (crypto.cloudflare.com)
 CF_HOST_TEST = "crypto.cloudflare.com"
 STAGE2_TIMEOUT = 1.2
 
-# 阶段 3：自定义域名校验
+# 阶段 3：自定义域名校验超时
 STAGE3_TIMEOUT = 1.2
 
+# CPU 核心数
 CPU_CORES = max(1, os.cpu_count() or 1)
 
+# 优化 SSL Context
 SSL_CTX = ssl.create_default_context()
 SSL_CTX.check_hostname = False
 SSL_CTX.verify_mode = ssl.CERT_NONE
 SSL_CTX.options |= ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3
 
-# 全局共享变量
+# 全局共享变量定义
 global_counter = None
 global_pass_counter = None
 global_lock = None
@@ -85,93 +101,90 @@ global_total = 0
 global_step = 0
 global_printed_milestones = None
 
-ASIA_KEYWORDS = [
-    "香港", "日本", "新加坡", "韩国", "台湾", "澳门", "马来西亚", "泰国", "越南",
-    "菲律宾", "印度尼西亚", "印尼", "柬埔寨", "老挝", "缅甸", "文莱", "印度", 
-    "巴基斯坦", "孟加拉", "阿联酋", "迪拜", "土耳其", "沙特", "卡塔尔", "科威特", 
-    "阿曼", "以色列", "哈萨克斯坦", "hk", "hongkong", "jp", "japan", "sg", "singapore", 
-    "kr", "korea", "tw", "taiwan", "mo", "macau"
-]
 
 def silent_exception_handler(loop, context):
+    """静默处理底层网络重置与握手报错"""
     exception = context.get("exception")
     if isinstance(exception, (ConnectionResetError, TimeoutError, OSError, ssl.SSLError)):
         return
 
-def is_asia_region(region_name):
-    """判断地区名称是否属于亚洲"""
-    reg_lower = region_name.lower()
-    return any(kw in reg_lower for kw in ASIA_KEYWORDS)
 
-def parse_asn_file(file_path, ip_info_map):
-    """解析单个 ASN 文本文件，完美支持 运营商 -> 地区 -> CIDR 多层缩进结构"""
-    if not os.path.isfile(file_path):
-        return
-
-    current_isp = "未知运营商"
-    current_region = "未知地区"
-    is_asia = False
-
-    try:
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                raw_line = line.strip()
-                if not raw_line:
-                    continue
-
-                # 1. 判断 ISP 标记
-                if raw_line in ["移动", "联通", "电信"]:
-                    current_isp = raw_line
-                    continue
-
-                # 2. 提取 CIDR
-                found_cidrs = re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', raw_line)
-                
-                if found_cidrs:
-                    # 只有当前地区处于亚洲关键字范围内时，才写入 IP 字典
-                    if is_asia:
-                        for c in found_cidrs:
-                            try:
-                                net = ipaddress.ip_network(c, strict=False)
-                                for ip in net:
-                                    ip_info_map[str(ip)] = (current_isp, current_region)
-                            except Exception:
-                                pass
-                else:
-                    # 3. 如果不是 CIDR 也不是 ISP，则为地区标记
-                    current_region = raw_line
-                    is_asia = is_asia_region(current_region)
-
-    except Exception as e:
-        print(f"[-] 解析文件失败 {file_path}: {e}", flush=True)
+def is_asia_label(label):
+    """判断是否包含亚洲国家/地区关键词"""
+    label_upper = label.upper()
+    for kw in ASIA_KEYWORDS:
+        if kw.upper() in label_upper:
+            return True
+    return False
 
 
-def build_asia_ip_map():
-    """递归遍历 优选asn段 目录下所有的 txt 文件并构建 IP 归属映射"""
-    ip_info_map = {}
+def build_ip_region_map():
+    """
+    智能解析 `优选asn段` 下的所有 txt 文件。
+    支持运营商层级（移动/联通）+ 国家层级缩进解析，只提取亚洲地区。
+    """
+    ip_region_map = {}
+    asn_dir = os.path.join(BASE_DIR, "优选asn段")
     
-    if not os.path.exists(ASN_DIR):
-        print(f"[-] 警告: 未找到 ASN 目录 {ASN_DIR}", flush=True)
-        return ip_info_map
+    if not os.path.exists(asn_dir):
+        print(f"[-] 错误: 找不到 `优选asn段` 目录: {asn_dir}", flush=True)
+        return ip_region_map
 
-    print(f"[*] 正在扫描并解析 '{ASN_DIR}' 目录下所有 txt 文件中的亚洲段...", flush=True)
-    
-    # 自动加载 优选asn段/ 目录下的每一个 .txt 文件 (包括 140227.txt 等所有文件)
-    for root, _, files in os.walk(ASN_DIR):
-        for file in files:
-            if file.endswith(".txt"):
-                file_path = os.path.join(root, file)
-                parse_asn_file(file_path, ip_info_map)
+    txt_files = glob.glob(os.path.join(asn_dir, "*.txt"))
+    print(f"[*] 找到 {len(txt_files)} 个 ASN 段定义文件，准备读取...", flush=True)
 
-    print(f"[+] 亚洲 IP 字典构建完成，已加载 {len(ip_info_map):,} 个 IP 的归属信息。", flush=True)
-    return ip_info_map
+    for p in txt_files:
+        try:
+            with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                operator = ""       # 记录顶级运营商（移动/联通等）
+                country_region = "" # 记录二级国家/地区
+
+                for line in f:
+                    raw_line = line.rstrip()
+                    if not raw_line.strip():
+                        continue
+                    
+                    indent_level = len(raw_line) - len(raw_line.lstrip())
+                    clean_line = raw_line.strip()
+                    found_cidrs = re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', clean_line)
+
+                    if not found_cidrs:
+                        # 0 缩进通常是顶级运营商（移动/联通）或国家
+                        if indent_level == 0:
+                            if clean_line in ["移动", "联通", "电信"]:
+                                operator = clean_line
+                                country_region = ""
+                            else:
+                                operator = ""
+                                country_region = clean_line
+                        # 2格/4格缩进通常是国家/地区
+                        elif indent_level in [2, 4]:
+                            country_region = clean_line
+                    else:
+                        # 拼接完整标签，如 "移动 香港" 或 "香港"
+                        full_label = f"{operator} {country_region}".strip() if operator else country_region
+                        
+                        # 筛选亚洲地区
+                        if is_asia_label(country_region) or is_asia_label(full_label):
+                            for c in found_cidrs:
+                                try:
+                                    net = ipaddress.ip_network(c, strict=False)
+                                    for ip in net:
+                                        ip_region_map[str(ip)] = full_label
+                                except Exception:
+                                    pass
+        except Exception as e:
+            print(f"[-] 读取文件失败 {p}: {e}", flush=True)
+
+    print(f"[+] IP 映射构建完成，已加载 {len(ip_region_map):,} 个亚洲 IP 目标", flush=True)
+    return ip_region_map
 
 
-def load_masscan_targets(json_file, ip_info_map):
-    """从 Masscan JSON 加载探活目标并附带 ISP/地区 信息"""
+def load_masscan_targets(json_file, ip_region_map):
+    """读取并解析 Masscan 输出的 JSON 文件"""
     targets = []
     if not os.path.exists(json_file):
-        print(f"[-] 找不到 Masscan 输出文件: {json_file}", flush=True)
+        print(f"[-] 找不到 Masscan 文件: {json_file}", flush=True)
         return targets
 
     try:
@@ -188,13 +201,15 @@ def load_masscan_targets(json_file, ip_info_map):
             for entry in data:
                 ip = entry.get('ip')
                 ports = entry.get('ports', [])
-                isp, region = ip_info_map.get(ip, ("未知运营商", "未知地区"))
-                for p in ports:
-                    port = p.get('port')
-                    if ip and port:
-                        targets.append((ip, int(port), isp, region))
+                
+                if ip in ip_region_map:
+                    region = ip_region_map[ip]
+                    for p in ports:
+                        port = p.get('port')
+                        if ip and port:
+                            targets.append((ip, int(port), region))
     except Exception as e:
-        print(f"[-] 解析 Masscan 文件失败: {e}", flush=True)
+        print(f"[-] 解析 Masscan 导出文件失败: {e}", flush=True)
 
     random.shuffle(targets)
     return targets
@@ -221,6 +236,7 @@ def match_domain_in_cert(sni_domain, cert_str):
 
 
 async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
+    """异步 TLS 握手校验"""
     async with sem:
         writer = None
         try:
@@ -253,6 +269,7 @@ async def check_tls_sni_async(ip, port, sni, timeout_val, sem):
 
 
 async def check_http_async(ip, port, host, timeout_val, sem):
+    """阶段二：校验 HTTP 301/302 重定向"""
     async with sem:
         writer = None
         try:
@@ -268,6 +285,7 @@ async def check_http_async(ip, port, host, timeout_val, sem):
             await writer.drain()
 
             data = await asyncio.wait_for(reader.read(512), timeout=timeout_val)
+
             if not data:
                 return False
 
@@ -304,7 +322,7 @@ def _process_worker_stage1(targets_chunk):
 
         sem = asyncio.Semaphore(STAGE1_CONCURRENCY)
 
-        async def worker(ip, port, isp, region):
+        async def worker(ip, port, region):
             res = await check_tls_sni_async(ip, port, CF_SNI_1, STAGE1_TIMEOUT, sem)
             
             with global_lock:
@@ -324,82 +342,41 @@ def _process_worker_stage1(targets_chunk):
 
             return res
 
-        tasks = [worker(ip, port, isp, region) for ip, port, isp, region in targets_chunk]
+        tasks = [worker(ip, port, region) for ip, port, region in targets_chunk]
         results = await asyncio.gather(*tasks)
         return [targets_chunk[i] for i, ok in enumerate(results) if ok]
 
     return asyncio.run(_run())
 
 
-def save_results_by_region_and_isp(final_items):
-    """按地区分类（香港、日本、新加坡、其他），并且移动在前、联通在后写入"""
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-    category_map = {
-        "香港": defaultdict(list),
-        "日本": defaultdict(list),
-        "新加坡": defaultdict(list),
-        "其他": defaultdict(list)
-    }
-
-    for ip, port, isp, region in final_items:
-        file_key = "其他"
-        if "香港" in region or "hk" in region.lower() or "hongkong" in region.lower():
-            file_key = "香港"
-        elif "日本" in region or "jp" in region.lower() or "japan" in region.lower():
-            file_key = "日本"
-        elif "新加坡" in region or "sg" in region.lower() or "singapore" in region.lower():
-            file_key = "新加坡"
-
-        category_map[file_key][isp].append((ip, port))
-
-    isp_priority = ["移动", "联通"]
-
-    for cat_name, isps_dict in category_map.items():
-        file_path = os.path.join(OUTPUT_DIR, f"{cat_name}.txt")
-        
-        all_isps = list(isps_dict.keys())
-        sorted_isps = [isp for isp in isp_priority if isp in all_isps]
-        for isp in all_isps:
-            if isp not in sorted_isps:
-                sorted_isps.append(isp)
-
-        with open(file_path, "w", encoding="utf-8") as f:
-            for isp in sorted_isps:
-                nodes = isps_dict[isp]
-                if not nodes:
-                    continue
-                
-                sorted_nodes = sorted(nodes, key=lambda x: (ipaddress.ip_address(x[0]), x[1]))
-                
-                f.write(f"[{isp}]\n")
-                for ip, port in sorted_nodes:
-                    f.write(f"{ip}:{port}\n")
-                f.write("\n")
-
-        total_cat_count = sum(len(v) for v in isps_dict.values())
-        print(f"[+] 保存 [{cat_name}.txt] 完成 (共 {total_cat_count} 个 IP:端口) -> {file_path}", flush=True)
+def get_operator_priority(region_label):
+    """排序依据：移动在前(0)，联通在后(1)，其他(2)"""
+    if "移动" in region_label:
+        return 0
+    elif "联通" in region_label:
+        return 1
+    return 2
 
 
 async def main():
     loop = asyncio.get_running_loop()
     loop.set_exception_handler(silent_exception_handler)
 
-    print(f"[*] 正在加载亚洲段 ASN 映射表...", flush=True)
-    ip_info_map = build_asia_ip_map()
+    print(f"[*] 读取 `优选asn段` 并加载亚洲国家/地区段...", flush=True)
+    ip_region_map = build_ip_region_map()
 
-    print(f"[*] 正在从 Masscan JSON 导入目标: {MASSCAN_JSON_FILE} ...", flush=True)
-    pass_0 = load_masscan_targets(MASSCAN_JSON_FILE, ip_info_map)
+    print(f"[*] 正在从 Masscan JSON 导入探活结果: {MASSCAN_JSON_FILE} ...", flush=True)
+    pass_0 = load_masscan_targets(MASSCAN_JSON_FILE, ip_region_map)
 
     if not pass_0:
-        print("[-] Masscan 结果为空，程序退出。", flush=True)
+        print("[-] Masscan 结果中无任何匹配的亚洲开放端口目标，程序退出。", flush=True)
         return
 
-    # 1. 第一阶段 TLS 探测
+    # 1. 第一阶段 TLS 证书匹配
     total_targets_count = len(pass_0)
     total_concurrency = STAGE1_CONCURRENCY * CPU_CORES
     print(f"[*] 引擎初始化：uvloop={UVLOOP_ENABLED} | 进程数={CPU_CORES} | 单进程并发={STAGE1_CONCURRENCY} | 总并发数={total_concurrency}", flush=True)
-    print(f"\n[1/3 第一阶段 TLS 探测] 多进程并行校验 (总目标数: {total_targets_count:,} 个)...", flush=True)
+    print(f"\n[1/3 第一阶段 TLS 探测] 多进程并行校验 (符合条件目标: {total_targets_count:,} 个)...", flush=True)
 
     manager = multiprocessing.Manager()
     global_counter_var = manager.Value('i', 0)        
@@ -422,23 +399,23 @@ async def main():
         for res in results:
             pass_1.extend(res)
 
-    print(f"[+] 第一阶段完成！保留目标: {len(pass_1)} 个\n", flush=True)
+    print(f"[+] 第一阶段完成！匹配 CF 证书保留目标: {len(pass_1)} 个\n", flush=True)
 
     if not pass_1:
-        print("[-] 无有效目标通过第一阶段。", flush=True)
+        print("[-] 无有效 IP:端口 通过第一阶段。", flush=True)
         return
 
     sem = asyncio.Semaphore(STAGE1_CONCURRENCY * CPU_CORES)
 
     # 2. 第二阶段 HTTP 校验
-    print(f"[2/3 第二阶段 HTTP 校验] 校验 {len(pass_1)} 个候选目标...", flush=True)
-    tasks2 = [check_http_async(ip, port, CF_HOST_TEST, STAGE2_TIMEOUT, sem) for ip, port, isp, reg in pass_1]
+    print(f"[2/3 第二阶段 HTTP 校验] 正在快速校验 {len(pass_1)} 个候选目标...", flush=True)
+    tasks2 = [check_http_async(ip, port, CF_HOST_TEST, STAGE2_TIMEOUT, sem) for ip, port, reg in pass_1]
     res2 = await asyncio.gather(*tasks2)
     pass_2 = [pass_1[i] for i, ok in enumerate(res2) if ok]
     print(f"[+] 第二阶段完成！可用 301 重定向目标: {len(pass_2)} 个\n", flush=True)
 
     if not pass_2:
-        print("[-] 无有效目标通过第二阶段。", flush=True)
+        print("[-] 无有效 IP:端口 通过第二阶段。", flush=True)
         return
 
     # 3. 第三阶段 自定义托管域名校验
@@ -446,15 +423,56 @@ async def main():
     if CUSTOM_CF_DOMAIN and CUSTOM_CF_DOMAIN.strip():
         domain = CUSTOM_CF_DOMAIN.strip()
         print(f"[3/3 第三阶段自定义域名校验] 正在校验域名 {domain}...", flush=True)
-        tasks3 = [check_tls_sni_async(ip, port, domain, STAGE3_TIMEOUT, sem) for ip, port, isp, reg in pass_2]
+        tasks3 = [check_tls_sni_async(ip, port, domain, STAGE3_TIMEOUT, sem) for ip, port, reg in pass_2]
         res3 = await asyncio.gather(*tasks3)
         final_items = [pass_2[i] for i, ok in enumerate(res3) if ok]
-        print(f"[+] 第三阶段完成！支持自定义托管域名的 IP: {len(final_items)} 个", flush=True)
+        print(f"[+] 第三阶段完成！支持自定义托管域名的优选反代 IP: {len(final_items)} 个", flush=True)
 
-    # 导出归类结果
-    print("\n==================== 扫描结束 & 正在分类导出 ====================", flush=True)
-    save_results_by_region_and_isp(final_items)
-    print("\n[+] 所有扫描结果已成功导出至【自用】文件夹！", flush=True)
+    # 4. 结果分类与输出保存
+    print("\n==================== 扫描结束 ====================", flush=True)
+    print(f"最终有效目标总数: {len(final_items)}", flush=True)
+
+    # 按照四个维度归类：香港, 日本, 新加坡, 其他
+    file_groups = {
+        "香港": defaultdict(list),
+        "日本": defaultdict(list),
+        "新加坡": defaultdict(list),
+        "其他": defaultdict(list)
+    }
+
+    for ip, port, region in final_items:
+        if "香港" in region or "HK" in region.upper():
+            file_groups["香港"][region].append((ip, port))
+        elif "日本" in region or "JP" in region.upper():
+            file_groups["日本"][region].append((ip, port))
+        elif "新加坡" in region or "SG" in region.upper():
+            file_groups["新加坡"][region].append((ip, port))
+        else:
+            file_groups["其他"][region].append((ip, port))
+
+    # 设置输出目录为 根目录/自用/
+    output_dir = os.path.join(BASE_DIR, "自用")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # 写入文件（移动在前，联通在后）
+    for category_name, grouped_data in file_groups.items():
+        output_path = os.path.join(output_dir, f"{category_name}.txt")
+        
+        # 按照“移动 -> 联通 -> 其他”对 Region 组进行排序
+        sorted_regions = sorted(grouped_data.keys(), key=lambda r: (get_operator_priority(r), r))
+        
+        with open(output_path, "w", encoding="utf-8") as f:
+            for region in sorted_regions:
+                nodes = grouped_data[region]
+                # 对 IP:Port 按 IP 地址字典顺序排列
+                sorted_nodes = sorted(nodes, key=lambda x: (ipaddress.ip_address(x[0]), x[1]))
+                
+                f.write(f"{region}\n")
+                for ip, port in sorted_nodes:
+                    f.write(f"{ip}:{port}\n")
+                f.write("\n")
+
+        print(f"[+] 已写入: {output_path} (节点数: {sum(len(v) for v in grouped_data.values())})", flush=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
