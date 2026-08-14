@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       target_input:
-        description: '扫描目标 (支持 ASN 如 AS36002、IP段如 203.66.11.0/20)'
+        description: '扫描目标 (支持 ASN 如 AS203923 或 IP段如 203.66.11.0/20)'
         required: true
-        default: 'AS36002'
+        default: 'AS203923'
       ports_input:
-        description: '需要扫描的端口号 (如 443,8443 或 1-65535)'
+        description: '需要扫描的端口号 (多个端口用空格或逗号隔开，如 443 8443 或 1-65535)'
         required: true
-        default: '443 8443'
+        default: '443 8443 2053 2083 2087 2096'
       concurrency_input:
         description: '扫描并发速率 (单进程并发数，推荐 1000~2000)'
         required: true
@@ -34,7 +34,7 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install System Tools & Masscan
+      - name: Install System Tools & Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y masscan
@@ -42,17 +42,52 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install cryptography uvloop aiohttp
 
+      - name: Run Masscan Probe
+        run: |
+          # 1. 解析目标 ASN 或 CIDR 并写入 targets.txt
+          python -c "
+          import sys, json, urllib.request, ipaddress
+          target = '${{ inputs.target_input }}'.strip()
+          cidrs = []
+
+          if target.upper().startswith('AS'):
+              asn = target.upper().replace('AS', '')
+              try:
+                  url = f'https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{asn}'
+                  req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                  with urllib.request.urlopen(req, timeout=10) as resp:
+                      data = json.loads(resp.read().decode())
+                      for p in data.get('data', {}).get('prefixes', []):
+                          prefix = p.get('prefix')
+                          if prefix and ':' not in prefix:
+                              cidrs.append(prefix)
+              except Exception as e:
+                  print(f'获取 ASN 失败: {e}')
+          else:
+              # 如果直接填的是 IP段 或 单个IP
+              cidrs.append(target)
+          
+          with open('targets.txt', 'w') as f:
+              for c in cidrs:
+                  f.write(c + '\n')
+          "
+          
+          # 2. 格式化端口参数 (把空格换成逗号)
+          PORTS=$(echo "${{ inputs.ports_input }}" | tr ' ' ',')
+          echo "[*] 正在对目标运行 Masscan 端口高速探活..."
+          sudo masscan -iL targets.txt -p$PORTS --rate 10000 -oJ masscan_out.json || true
+          echo "[+] Masscan 探活完成！"
+
       - name: Run ASN / IP Scan
         env:
           CUSTOM_CF_DOMAIN: ${{ secrets.CUSTOM_CF_DOMAIN }}
           STAGE1_CONCURRENCY: ${{ inputs.concurrency_input }}
         run: |
           ulimit -n 65535
-          python "脚本/check_cf_asn.py" "${{ inputs.target_input }}" "${{ inputs.ports_input }}"
+          python "脚本/check_cf_asn.py" "${{ inputs.target_input }}" "${{ inputs.ports_input }}" masscan_out.json
 
       - name: Commit and Push TXT Results
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Update scanned ASN txt files [skip ci]"
           file_pattern: "**/*.txt"
-          pull_options: '--rebase'
