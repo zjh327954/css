@@ -8,7 +8,7 @@ on:
         required: true
         default: 'AS36002'
       region_input:
-        description: '筛选国家或地区名称/代号 (如 HK DE、香港 德国，留空则提取全部)'
+        description: '筛选国家/地区/大洲 (如 亚洲、asia、HK DE、香港 德国，留空提取全部)'
         required: false
         default: ''
       ports_input:
@@ -54,7 +54,7 @@ jobs:
 
       - name: Run Masscan Probe
         run: |
-          # 1. 读取本地 优选asn段/XX.txt，支持传入多个地区（如 HK DE、香港 德国）
+          # 1. 读取本地 优选asn段/XX.txt，精准提取 IP 段
           python -c "
           import sys, json, urllib.request, os, re
 
@@ -63,28 +63,41 @@ jobs:
           asn_clean = target.upper().replace('AS', '')
           cidrs = []
 
-          # 别名映射字典
+          # 基础映射 (全小写)
           aliases = {
-              'hk': '香港', 'hongkong': '香港',
-              'tw': '台湾', 'taiwan': '台湾',
-              'jp': '日本', 'japan': '日本',
-              'sg': '新加坡', 'singapore': '新加坡',
-              'us': '美国', 'usa': '美国',
-              'uk': '英国', 'united kingdom': '英国',
-              'kr': '韩国', 'korea': '韩国',
-              'de': '德国', 'germany': '德国',
-              'fr': '法国', 'france': '法国'
+              'hk': ['hk', 'hongkong', '香港'],
+              'tw': ['tw', 'taiwan', '台湾'],
+              'jp': ['jp', 'japan', '日本'],
+              'sg': ['sg', 'singapore', '新加坡'],
+              'us': ['us', 'usa', '美国'],
+              'uk': ['uk', 'united kingdom', '英国'],
+              'kr': ['kr', 'korea', '韩国'],
+              'de': ['de', 'germany', '德国'],
+              'fr': ['fr', 'france', '法国'],
+              'in': ['in', 'india', '印度'],
+              'th': ['th', 'thailand', '泰国'],
+              'vn': ['vn', 'vietnam', '越南'],
+              'my': ['my', 'malaysia', '马来西亚'],
+              'ph': ['ph', 'philippines', '菲律宾'],
+              'id': ['id', 'indonesia', '印尼', '印度尼西亚']
           }
 
-          # 解析用户输入的多个地区代号/名称
-          target_regions = []
+          asia_keywords = ['hk', 'tw', 'jp', 'sg', 'kr', 'in', 'th', 'vn', 'my', 'ph', 'id', '香港', '台湾', '日本', '新加坡', '韩国', '亚洲', '印度', '泰国', '越南', '马来西亚', '菲律宾', '印尼']
+
+          # 提取关键词
+          target_keywords = set()
           if raw_region:
               tokens = re.split(r'[\s,;|]+', raw_region)
               for t in tokens:
-                  if t:
-                      t_lower = t.lower()
-                      mapped = aliases.get(t_lower, t_lower)
-                      target_regions.append(mapped)
+                  if not t:
+                      continue
+                  t_lower = t.lower()
+                  if t_lower in ['亚洲', 'asia']:
+                      target_keywords.update(asia_keywords)
+                  elif t_lower in aliases:
+                      target_keywords.update(aliases[t_lower])
+                  else:
+                      target_keywords.add(t_lower)
 
           local_paths = [
               f'优选asn段/{asn_clean}.txt',
@@ -94,7 +107,7 @@ jobs:
           for p in local_paths:
               if os.path.isfile(p):
                   found_local = True
-                  print(f'[*] 发现本地文件 {p}，开始筛选匹配 [{target_regions or \"全部\"}] 的 IP 段...')
+                  print(f'[*] 发现本地文件 {p}，开始筛选关键词 {list(target_keywords) or \"[全部]\"} 的 IP 段...')
                   
                   current_section = ''
                   with open(p, 'r', encoding='utf-8', errors='ignore') as f:
@@ -105,9 +118,10 @@ jobs:
                           
                           found_cidrs = re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', line_str)
                           if found_cidrs:
-                              if target_regions:
-                                  # 多地区判断：只要包含任意一个目标地区，就加入扫描列表
-                                  if any(r in current_section.lower() for r in target_regions):
+                              if target_keywords:
+                                  # 只要标题中包含任意一个关键词（忽略大小写），就保留
+                                  sec_lower = current_section.lower()
+                                  if any(k in sec_lower for k in target_keywords):
                                       cidrs.extend(found_cidrs)
                               else:
                                   cidrs.extend(found_cidrs)
