@@ -1,106 +1,117 @@
 name: '每日扫描'
 
 on:
-  # 1. 每日定时自动运行 (UTC 时间 18:00，即北京时间凌晨 02:00)
-  schedule:
-    - cron: '0 18 * * *'
-
-  # 2. 手动触发运行，支持自定义参数输入
   workflow_dispatch:
     inputs:
-      scan_ports:
-        description: '要扫描的端口列表 (逗号分隔)'
+      region_input:
+        description: '筛选国家/地区 (如 香港 日本 新加坡，留空默认亚洲全部)'
         required: false
-        default: '443,8443,2053,2083,2087,2096'
-      masscan_rate:
-        description: 'Masscan 扫描速率 (pps 发包率)'
-        required: false
-        default: '5000'
-      stage1_concurrency:
-        description: 'Python 校验阶段单进程并发数'
-        required: false
-        default: '200'
+        default: ''
+      ports_input:
+        description: '需要扫描的端口号 (多个端口用空格或逗号隔开)'
+        required: true
+        default: '443 8443 2053 2083 2087 2096'
+      masscan_rate_input:
+        description: 'Masscan 发包速率 (pps，推荐 5000 ~ 15000)'
+        required: true
+        default: '1000'
+      py_concurrency_input:
+        description: 'Python 握手并发数 (单进程并发，推荐 500 ~ 2000)'
+        required: true
+        default: '500'
 
 jobs:
   scan:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+
     steps:
-      - name: 检出仓库代码
+      - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: 安装 Masscan 与 Python 环境
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install System Tools & Dependencies
         run: |
-          echo "[*] 正在静默安装 Masscan 与 Python 依赖..."
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq masscan > /dev/null
-          python3 -m pip install --upgrade pip -q
-          pip install uvloop -q || true
-          echo "[+] 环境准备完成！"
+          echo "[*] 正在安装系统工具和 Python 依赖..."
+          sudo apt-get update -y > /dev/null
+          sudo apt-get install -y masscan > /dev/null
+          python -m pip install --upgrade pip -q
+          if [ -f requirements.txt ]; then pip install -r requirements.txt -q; fi
+          pip install cryptography uvloop aiohttp -q
+          echo "[+] 环境安装完毕！"
 
-      - name: 提取【优选asn段】亚洲 CIDR 列表并统计测试目标
+      - name: Run Masscan Probe
         run: |
-          mkdir -p 临时缓存
-          > 临时缓存/target_cidrs.txt
-
-          ASN_PATH="优选asn段"
-          if [ ! -d "$ASN_PATH" ] && [ -d "脚本/优选asn段" ]; then
-            ASN_PATH="脚本/优选asn段"
-          fi
-
-          echo "[*] 正在解析 '$ASN_PATH' 下所有 txt 文件中的亚洲 CIDR..."
-
-          shopt -s nullglob
-          for f in "$ASN_PATH"/*.txt; do
-            python3 -c "import re, sys; asia = re.compile(r'香港|日本|新加坡|韩国|台湾|澳门|马来西亚|泰国|越南|菲律宾|印度尼西亚|印尼|柬埔寨|老挝|缅甸|文莱|印度|巴基斯坦|孟加拉|阿联酋|迪拜|土耳其|沙特|卡塔尔|科威特|阿曼|以色列|哈萨克斯坦|hk|hongkong|jp|japan|sg|singapore|kr|korea|tw|taiwan|mo|macau', re.I); cidr = re.compile(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?'); cur = False; out = open('临时缓存/target_cidrs.txt', 'a'); [out.write(c + '\n') for line in open('$f', 'r', encoding='utf-8', errors='ignore') for raw in [line.strip()] if raw for cur in [bool(asia.search(raw)) if not cidr.search(raw) and raw not in ['移动', '联通', '电信'] else cur] if cur for c in cidr.findall(raw)]; out.close()" || true
-          done
-
-          # 去重排序
-          sort -u 临时缓存/target_cidrs.txt -o 临时缓存/target_cidrs.txt
-
-          # 动态获取端口参数，计算端口数量
-          PORTS="${{ github.event.inputs.scan_ports || '443,8443,2053,2083,2087,2096' }}"
+          rm -f masscan_out.json targets.txt
           
-          python3 -c "import ipaddress; ports='$PORTS'.split(','); p_cnt=len(ports); cidrs=[ipaddress.ip_network(l.strip(), False) for l in open('临时缓存/target_cidrs.txt') if l.strip()]; ips=sum(n.num_addresses for n in cidrs); print(f'[*] 解析完成：共提取 {len(cidrs):,} 个 CIDR 网段 | {ips:,} 个 IP × {p_cnt} 个端口 = 共 {ips*p_cnt:,} 个测试目标。')"
+          # 提取 `优选asn段` 文件夹下所有 txt 中的 CIDR 段写入 targets.txt
+          python -c "
+          import os, glob, re
 
-      - name: 执行 Masscan 端口探活
-        run: |
-          PORTS="${{ github.event.inputs.scan_ports || '443,8443,2053,2083,2087,2096' }}"
-          RATE="${{ github.event.inputs.masscan_rate || '5000' }}"
+          asn_dir = '优选asn段'
+          cidrs = []
+          if os.path.exists(asn_dir):
+              for p in glob.glob(os.path.join(asn_dir, '*.txt')):
+                  with open(p, 'r', encoding='utf-8', errors='ignore') as f:
+                      for line in f:
+                          found = re.findall(r'(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?', line)
+                          if found:
+                              cidrs.extend(found)
+
+          cidrs = list(dict.fromkeys(cidrs))
+          print(f'[+] 自动合并 `优选asn段` 下所有文件，共计提取到 {len(cidrs)} 个 CIDR 网段写入 targets.txt')
           
-          echo "[*] 开始 Masscan 端口扫描 (速率: $RATE pps)..."
+          with open('targets.txt', 'w', encoding='utf-8') as f:
+              for c in cidrs:
+                  f.write(c + '\n')
+          "
+          
+          # 2. 运行 Masscan 发包探活
+          PORTS=$(echo "${{ inputs.ports_input }}" | tr ' ' ',')
+          echo "[*] 正在运行 Masscan 探活 (设定发包速率: ${{ inputs.masscan_rate_input }} pps)..."
+          
+          python -c "
+          import subprocess, sys, re
 
-          if [ ! -s "临时缓存/target_cidrs.txt" ]; then
-            echo "[-] 错误：未能提取到有效的 CIDR 目标网段！"
-            exit 1
-          fi
+          cmd = ['sudo', 'masscan', '-iL', 'targets.txt', '-p', '$PORTS', '--rate', '${{ inputs.masscan_rate_input }}', '--wait', '0', '-oJ', 'masscan_out.json']
+          process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
 
-          sudo masscan -iL 临时缓存/target_cidrs.txt \
-            -p"$PORTS" \
-            --rate="$RATE" \
-            -oJ masscan_out.json \
-            --wait 2
+          last_milestone = 0
+          pattern = re.compile(r'([\d\.]+)%\s+done.*found=(\d+)')
 
-          echo "[+] Masscan 探活完成，结果已保存至 masscan_out.json"
+          for line in process.stdout:
+              match = pattern.search(line)
+              if match:
+                  pct = float(match.group(1))
+                  found = match.group(2)
+                  milestone = int(pct // 10) * 10
+                  if milestone > last_milestone and milestone <= 100:
+                      print(f'  [Masscan 探活进度] {milestone}% | 已发现开放端口: {found} 个', flush=True)
+                      last_milestone = milestone
 
-      - name: 执行 Python 三阶段精细校验与归类
+          process.wait()
+          "
+          echo "[+] Masscan 探活完成！"
+
+      - name: Run ASN / IP Scan
         env:
-          STAGE1_CONCURRENCY: ${{ github.event.inputs.stage1_concurrency || '200' }}
-          CUSTOM_CF_DOMAIN: "327954.ccwu.cc"
+          CUSTOM_CF_DOMAIN: ${{ secrets.CUSTOM_CF_DOMAIN }}
+          STAGE1_CONCURRENCY: ${{ inputs.py_concurrency_input }}
         run: |
-          echo "[*] 开始启动 Python 验证脚本..."
-          python3 check_cf_asn5.py masscan_out.json
+          ulimit -n 65535
+          python "脚本/check_cf_asn5.py" "masscan_out.json" "${{ inputs.region_input }}"
 
-      - name: 提交并推送结果到 GitHub 仓库
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          
-          git add 自用/*.txt
-          if git diff --cached --quiet; then
-            echo "[*] 扫描结果没有变化，无需更新提交。"
-          else
-            git commit -m "auto: 更新每日亚洲优选反代 IP 列表 [$(date -u +'%Y-%m-%d %H:%M') UTC]"
-            git push
-            echo "[+] 新的优选 IP 结果已成功推送至仓库！"
-          fi
+      - name: Commit and Push TXT Results
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Update scanned ASN txt files [skip ci]"
+          file_pattern: "自用/*.txt"
+          skip_checkout: true
