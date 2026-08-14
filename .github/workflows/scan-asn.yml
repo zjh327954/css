@@ -36,11 +36,13 @@ jobs:
 
       - name: Install System Tools & Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y masscan
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install cryptography uvloop aiohttp
+          echo "[*] 正在安装系统工具和 Python 依赖..."
+          sudo apt-get update -y > /dev/null
+          sudo apt-get install -y masscan > /dev/null
+          python -m pip install --upgrade pip -q
+          if [ -f requirements.txt ]; then pip install -r requirements.txt -q; fi
+          pip install cryptography uvloop aiohttp -q
+          echo "[+] 环境安装完毕！"
 
       - name: Run Masscan Probe
         run: |
@@ -64,7 +66,6 @@ jobs:
               except Exception as e:
                   print(f'获取 ASN 失败: {e}')
           else:
-              # 如果直接填的是 IP段 或 单个IP
               cidrs.append(target)
           
           with open('targets.txt', 'w') as f:
@@ -72,10 +73,10 @@ jobs:
                   f.write(c + '\n')
           "
           
-          # 2. 格式化端口参数 (把空格换成逗号)
+          # 2. 格式化端口参数并运行 Masscan（加上 --wait 0 避免无意义等待和日志刷屏）
           PORTS=$(echo "${{ inputs.ports_input }}" | tr ' ' ',')
           echo "[*] 正在对目标运行 Masscan 端口高速探活..."
-          sudo masscan -iL targets.txt -p$PORTS --rate 10000 -oJ masscan_out.json || true
+          sudo masscan -iL targets.txt -p$PORTS --rate 10000 --wait 0 -oJ masscan_out.json || true
           echo "[+] Masscan 探活完成！"
 
       - name: Run ASN / IP Scan
