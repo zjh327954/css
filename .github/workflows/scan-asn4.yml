@@ -1,4 +1,4 @@
-name: '标准'
+name: '测试'
 
 on:
   workflow_dispatch:
