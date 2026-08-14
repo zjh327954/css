@@ -167,7 +167,7 @@ jobs:
           STAGE1_CONCURRENCY: ${{ inputs.py_concurrency_input || '500' }}
         run: |
           ulimit -n 65535
-          python "脚本/check_cf_asn4.py" "masscan_out.json" "${{ inputs.region_input || '' }}"
+          python "脚本/check_cf_asn5.py" "masscan_out.json" "${{ inputs.region_input || '' }}"
 
       - name: Commit and Push TXT Results
         uses: stefanzweifel/git-auto-commit-action@v5
