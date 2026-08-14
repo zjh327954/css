@@ -6,7 +6,7 @@ on:
       target_input:
         description: '扫描目标 (支持 ASN 如 AS203923 或 IP段如 203.66.11.0/20)'
         required: true
-        default: 'AS203923'
+        default: 'AS2'
       ports_input:
         description: '需要扫描的端口号 (多个端口用空格或逗号隔开，如 443 8443 或 1-65535)'
         required: true
@@ -14,11 +14,11 @@ on:
       masscan_rate_input:
         description: 'Masscan 发包速率 (pps，推荐 5000 ~ 15000)'
         required: true
-        default: '10000'
+        default: '1000'
       py_concurrency_input:
         description: 'Python 握手并发数 (单进程并发，推荐 500 ~ 2000)'
         required: true
-        default: '1500'
+        default: '100'
 
 jobs:
   scan:
