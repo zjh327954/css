@@ -6,7 +6,7 @@ on:
       target_input:
         description: '扫描目标 (支持 ASN 如 AS36002、IP段如 203.66.11.0/20)'
         required: true
-        default: 'AS'
+        default: 'AS36002'
       region_input:
         description: '筛选国家或地区名称/代号 (如 香港、hk、美国，留空则提取全部)'
         required: false
@@ -15,10 +15,14 @@ on:
         description: '需要扫描的端口号 (多个端口用逗号或空格隔开)'
         required: true
         default: '443 8443 2053 2083 2087 2096'
-      concurrency_input:
-        description: '单进程并发速率 (如 1000/1500/2000)'
+      masscan_rate_input:
+        description: 'Masscan 发包速率 (pps，推荐 5000 ~ 15000)'
         required: true
-        default: '100'
+        default: '10000'
+      py_concurrency_input:
+        description: 'Python 握手并发数 (单进程并发，推荐 500 ~ 2000)'
+        required: true
+        default: '1500'
 
 jobs:
   scan:
@@ -38,24 +42,82 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install Dependencies
+      - name: Install System Tools & Dependencies
         run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install cryptography uvloop aiohttp
+          echo "[*] 正在安装系统工具和 Python 依赖..."
+          sudo apt-get update -y > /dev/null
+          sudo apt-get install -y masscan > /dev/null
+          python -m pip install --upgrade pip -q
+          if [ -f requirements.txt ]; then pip install -r requirements.txt -q; fi
+          pip install cryptography uvloop aiohttp -q
+          echo "[+] 环境安装完毕！"
+
+      - name: Run Masscan Probe
+        run: |
+          # 1. 解析目标 ASN 或 CIDR 并写入 targets.txt
+          python -c "
+          import sys, json, urllib.request, ipaddress
+          target = '${{ inputs.target_input }}'.strip()
+          cidrs = []
+
+          if target.upper().startswith('AS'):
+              asn = target.upper().replace('AS', '')
+              try:
+                  url = f'https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{asn}'
+                  req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                  with urllib.request.urlopen(req, timeout=10) as resp:
+                      data = json.loads(resp.read().decode())
+                      for p in data.get('data', {}).get('prefixes', []):
+                          prefix = p.get('prefix')
+                          if prefix and ':' not in prefix:
+                              cidrs.append(prefix)
+              except Exception as e:
+                  print(f'获取 ASN 失败: {e}')
+          else:
+              cidrs.append(target)
+          
+          with open('targets.txt', 'w') as f:
+              for c in cidrs:
+                  f.write(c + '\n')
+          "
+          
+          # 2. 运行 Masscan 探活，捕获标准输出，每 10% 进度打印一行日志
+          PORTS=$(echo "${{ inputs.ports_input }}" | tr ' ' ',')
+          echo "[*] 正在运行 Masscan 探活 (设定发包速率: ${{ inputs.masscan_rate_input }} pps)..."
+          
+          python -c "
+          import subprocess, sys, re
+
+          cmd = ['sudo', 'masscan', '-iL', 'targets.txt', '-p', '$PORTS', '--rate', '${{ inputs.masscan_rate_input }}', '--wait', '0', '-oJ', 'masscan_out.json']
+          process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+
+          last_milestone = 0
+          pattern = re.compile(r'([\d\.]+)%\s+done.*found=(\d+)')
+
+          for line in process.stdout:
+              match = pattern.search(line)
+              if match:
+                  pct = float(match.group(1))
+                  found = match.group(2)
+                  milestone = int(pct // 10) * 10
+                  if milestone > last_milestone and milestone <= 100:
+                      print(f'  [Masscan 探活进度] {milestone}% | 已发现开放端口: {found} 个', flush=True)
+                      last_milestone = milestone
+
+          process.wait()
+          "
+          echo "[+] Masscan 探活完成！"
 
       - name: Run ASN / IP Scan
         env:
           CUSTOM_CF_DOMAIN: ${{ secrets.CUSTOM_CF_DOMAIN }}
-          STAGE1_CONCURRENCY: ${{ github.event.inputs.concurrency_input }}
+          STAGE1_CONCURRENCY: ${{ inputs.py_concurrency_input }}
         run: |
           ulimit -n 65535
-          python "脚本/check_cf_asn4.py" "${{ github.event.inputs.target_input }}" "${{ github.event.inputs.ports_input }}" "${{ github.event.inputs.region_input }}"
+          python "脚本/check_cf_asn4.py" "${{ inputs.target_input }}" "${{ inputs.ports_input }}" "masscan_out.json" "${{ inputs.region_input }}"
 
       - name: Commit and Push TXT Results
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git pull origin main --rebase --autostash
-          git add "**/*.txt"
-          git diff --staged --quiet || (git commit -m "Update scanned ASN txt files [skip ci]" && git push)
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Update scanned ASN txt files [skip ci]"
+          file_pattern: "**/*.txt"
