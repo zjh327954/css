@@ -1,6 +1,11 @@
 name: '每日扫描'
 
 on:
+  # 1. 每日自动定时扫描 (北京时间每天凌晨 04:00 自动执行)
+  schedule:
+    - cron: '0 23 * * *'
+
+  # 2. 手动触发扫描模式
   workflow_dispatch:
     inputs:
       region_input:
@@ -14,11 +19,11 @@ on:
       masscan_rate_input:
         description: 'Masscan 发包速率 (pps，推荐 5000 ~ 15000)'
         required: true
-        default: '1000'
+        default: '5000'
       py_concurrency_input:
         description: 'Python 握手并发数 (单进程并发，推荐 500 ~ 2000)'
         required: true
-        default: '500'
+        default: '200'
 
 jobs:
   scan:
@@ -52,7 +57,7 @@ jobs:
         run: |
           rm -f masscan_out.json targets.txt
           
-          # 提取 `优选asn段` 文件夹下所有 txt 中的 CIDR 段写入 targets.txt
+          # 提取 `优选asn段` 文件夹下所有 txt 中的 CIDR 网段写入 targets.txt
           python -c "
           import os, glob, re
 
@@ -75,13 +80,14 @@ jobs:
           "
           
           # 2. 运行 Masscan 发包探活
-          PORTS=$(echo "${{ inputs.ports_input }}" | tr ' ' ',')
-          echo "[*] 正在运行 Masscan 探活 (设定发包速率: ${{ inputs.masscan_rate_input }} pps)..."
+          PORTS=$(echo "${{ inputs.ports_input || '443 8443 2053 2083 2087 2096' }}" | tr ' ' ',')
+          RATE="${{ inputs.masscan_rate_input || '1000' }}"
+          echo "[*] 正在运行 Masscan 探活 (设定发包速率: $RATE pps)..."
           
           python -c "
           import subprocess, sys, re
 
-          cmd = ['sudo', 'masscan', '-iL', 'targets.txt', '-p', '$PORTS', '--rate', '${{ inputs.masscan_rate_input }}', '--wait', '0', '-oJ', 'masscan_out.json']
+          cmd = ['sudo', 'masscan', '-iL', 'targets.txt', '-p', '$PORTS', '--rate', '$RATE', '--wait', '0', '-oJ', 'masscan_out.json']
           process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
 
           last_milestone = 0
@@ -104,10 +110,10 @@ jobs:
       - name: Run ASN / IP Scan
         env:
           CUSTOM_CF_DOMAIN: ${{ secrets.CUSTOM_CF_DOMAIN }}
-          STAGE1_CONCURRENCY: ${{ inputs.py_concurrency_input }}
+          STAGE1_CONCURRENCY: ${{ inputs.py_concurrency_input || '500' }}
         run: |
           ulimit -n 65535
-          python "脚本/check_cf_asn5.py" "masscan_out.json" "${{ inputs.region_input }}"
+          python "脚本/check_cf_asn4.py" "masscan_out.json" "${{ inputs.region_input || '' }}"
 
       - name: Commit and Push TXT Results
         uses: stefanzweifel/git-auto-commit-action@v5
