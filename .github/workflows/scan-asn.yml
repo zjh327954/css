@@ -12,7 +12,7 @@ on:
         required: true
         default: '443 8443 2053 2083 2087 2096'
       concurrency_input:
-        description: '扫描并发速率 (同时控制 Masscan pps 发包速率与 Python 并发)'
+        description: '扫描并发速率 (控制 Masscan pps 发包速率与 Python 并发)'
         required: true
         default: '10000'
 
@@ -73,10 +73,31 @@ jobs:
                   f.write(c + '\n')
           "
           
-          # 2. 将输入的 concurrency_input 动态绑定给 Masscan 的 --rate 速率
+          # 2. 动态捕获 Masscan 输出，只在每 10% 阶段打印一行日志
           PORTS=$(echo "${{ inputs.ports_input }}" | tr ' ' ',')
-          echo "[*] 正在运行 Masscan 探活 (指定速率: ${{ inputs.concurrency_input }} pps)..."
-          sudo masscan -iL targets.txt -p$PORTS --rate ${{ inputs.concurrency_input }} --wait 0 -oJ masscan_out.json || true
+          echo "[*] 正在运行 Masscan 探活 (速率: ${{ inputs.concurrency_input }} pps)..."
+          
+          python -c "
+          import subprocess, sys, re
+
+          cmd = ['sudo', 'masscan', '-iL', 'targets.txt', '-p', '$PORTS', '--rate', '${{ inputs.concurrency_input }}', '--wait', '0', '-oJ', 'masscan_out.json']
+          process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+
+          last_milestone = 0
+          pattern = re.compile(r'([\d\.]+)%\s+done.*found=(\d+)')
+
+          for line in process.stdout:
+              match = pattern.search(line)
+              if match:
+                  pct = float(match.group(1))
+                  found = match.group(2)
+                  milestone = int(pct // 10) * 10
+                  if milestone > last_milestone and milestone <= 100:
+                      print(f'  [Masscan 探活进度] {milestone}% | 已发现开放端口: {found} 个', flush=True)
+                      last_milestone = milestone
+
+          process.wait()
+          "
           echo "[+] Masscan 探活完成！"
 
       - name: Run ASN / IP Scan
