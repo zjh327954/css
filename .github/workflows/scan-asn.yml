@@ -52,13 +52,14 @@ jobs:
         run: |
           # 1. 解析目标 ASN 或 CIDR，计算总 IP 数并记录 ASN 标识
           python -c "
-          import sys, json, urllib.request, ipaddress
-          target = '${{ inputs.target_input }}'.strip()
+          import sys, json, urllib.request, ipaddress, re
+
+          target_raw = '''${{ inputs.target_input }}'''.strip()
           cidrs = []
           asn_info = '无 (自定义 IP 段)'
 
-          if target.upper().startswith('AS'):
-              asn = target.upper().replace('AS', '')
+          if target_raw.upper().startswith('AS'):
+              asn = target_raw.upper().replace('AS', '').strip()
               asn_info = f'AS{asn}'
               try:
                   url = f'https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{asn}'
@@ -72,18 +73,28 @@ jobs:
               except Exception as e:
                   print(f'获取 ASN 失败: {e}')
           else:
-              cidrs.append(target)
-          
+              # 匹配输入中的所有 IPv4 CIDR 或 单个 IP
+              raw_cidrs = re.split(r'[\s,\n]+', target_raw)
+              for c in raw_cidrs:
+                  c = c.strip()
+                  if c:
+                      cidrs.append(c)
+
           total_ips = 0
+          valid_cidrs = []
+
+          for c in cidrs:
+              try:
+                  net = ipaddress.ip_network(c, strict=False)
+                  total_ips += net.num_addresses
+                  valid_cidrs.append(str(net))
+              except Exception:
+                  pass
+
           with open('targets.txt', 'w') as f:
-              for c in cidrs:
+              for c in valid_cidrs:
                   f.write(c + '\n')
-                  try:
-                      total_ips += ipaddress.ip_network(c, strict=False).num_addresses
-                  except Exception:
-                      pass
-          
-          # 保存数据供 Shell 读取
+
           with open('scan_info.json', 'w') as f:
               json.dump({'total_ips': total_ips, 'asn': asn_info}, f)
           "
@@ -133,7 +144,6 @@ jobs:
       - name: Check if valid result files exist
         id: check_files
         run: |
-          # 排除 targets.txt，只查找大于 0 字节的 txt 结果文件
           files=$(find . -maxdepth 3 -name "*.txt" -not -name "targets.txt" -size +0c)
           if [ -n "$files" ]; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
