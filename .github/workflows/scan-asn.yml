@@ -10,11 +10,11 @@ on:
       ports_input:
         description: '需要扫描的端口号 (多个端口用空格或逗号隔开，如 443 8443 或 1-65535)'
         required: true
-        default: '443 8443 2053 2083 2087 2096'
+        default: '443 8443'
       masscan_rate_input:
         description: 'Masscan 发包速率 (pps，推荐 5000 ~ 15000)'
         required: true
-        default: '1000'
+        default: '2000'
       py_concurrency_input:
         description: 'Python 握手并发数 (单进程并发，推荐 500 ~ 2000)'
         required: true
@@ -133,7 +133,7 @@ jobs:
       - name: Check if valid result files exist
         id: check_files
         run: |
-          # 过滤排除了 targets.txt，只查找大于 0 字节（非空）的 txt 结果文件
+          # 排除 targets.txt，只查找大于 0 字节的 txt 结果文件
           files=$(find . -maxdepth 3 -name "*.txt" -not -name "targets.txt" -size +0c)
           if [ -n "$files" ]; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
