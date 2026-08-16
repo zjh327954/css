@@ -50,7 +50,7 @@ jobs:
 
       - name: Run Masscan Probe
         run: |
-          # 1. 解析目标 ASN 或 CIDR 并写入 targets.txt
+          # 1. 解析目标 ASN 或 CIDR 并写入 targets.txt，同时计算总 IP 数
           python -c "
           import sys, json, urllib.request, ipaddress
           target = '${{ inputs.target_input }}'.strip()
@@ -72,15 +72,30 @@ jobs:
           else:
               cidrs.append(target)
           
+          total_ips = 0
           with open('targets.txt', 'w') as f:
               for c in cidrs:
                   f.write(c + '\n')
+                  try:
+                      total_ips += ipaddress.ip_network(c, strict=False).num_addresses
+                  except Exception:
+                      pass
+          
+          # 将总 IP 数保存为临时文件供 Shell 读取
+          with open('total_ips.txt', 'w') as f:
+              f.write(str(total_ips))
           "
           
-          # 2. 传入 masscan_rate_input 独立控制探活发包速率，每 10% 打印进度
+          # 2. 计算端口数与总扫描数量并在扫描前打印
           PORTS=$(echo "${{ inputs.ports_input }}" | tr ' ' ',')
+          TOTAL_IPS=$(cat total_ips.txt)
+          PORT_COUNT=$(echo "$PORTS" | awk -F',' '{print NF}')
+          TOTAL_SCANS=$((TOTAL_IPS * PORT_COUNT))
+
+          echo "[*] 目标 IP 数量: ${TOTAL_IPS} | 端口数量: ${PORT_COUNT} | 预计总扫描数: ${TOTAL_SCANS}"
           echo "[*] 正在运行 Masscan 探活 (设定发包速率: ${{ inputs.masscan_rate_input }} pps)..."
           
+          # 3. 运行 Masscan 探活并在终端打印百分比进度
           python -c "
           import subprocess, sys, re
 
