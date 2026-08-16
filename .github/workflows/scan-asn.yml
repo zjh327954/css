@@ -50,14 +50,16 @@ jobs:
 
       - name: Run Masscan Probe
         run: |
-          # 1. 解析目标 ASN 或 CIDR 并写入 targets.txt，同时计算总 IP 数
+          # 1. 解析目标 ASN 或 CIDR，计算总 IP 数并记录 ASN 标识
           python -c "
           import sys, json, urllib.request, ipaddress
           target = '${{ inputs.target_input }}'.strip()
           cidrs = []
+          asn_info = '无 (自定义 IP 段)'
 
           if target.upper().startswith('AS'):
               asn = target.upper().replace('AS', '')
+              asn_info = f'AS{asn}'
               try:
                   url = f'https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{asn}'
                   req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -81,18 +83,19 @@ jobs:
                   except Exception:
                       pass
           
-          # 将总 IP 数保存为临时文件供 Shell 读取
-          with open('total_ips.txt', 'w') as f:
-              f.write(str(total_ips))
+          # 保存数据供 Shell 读取
+          with open('scan_info.json', 'w') as f:
+              json.dump({'total_ips': total_ips, 'asn': asn_info}, f)
           "
           
-          # 2. 计算端口数与总扫描数量并在扫描前打印
+          # 2. 读取 ASN 信息、计算端口数与总扫描数量并在扫描前打印
           PORTS=$(echo "${{ inputs.ports_input }}" | tr ' ' ',')
-          TOTAL_IPS=$(cat total_ips.txt)
+          TOTAL_IPS=$(python -c "import json; print(json.load(open('scan_info.json'))['total_ips'])")
+          TARGET_ASN=$(python -c "import json; print(json.load(open('scan_info.json'))['asn'])")
           PORT_COUNT=$(echo "$PORTS" | awk -F',' '{print NF}')
           TOTAL_SCANS=$((TOTAL_IPS * PORT_COUNT))
 
-          echo "[*] 目标 IP 数量: ${TOTAL_IPS} | 端口数量: ${PORT_COUNT} | 预计总扫描数: ${TOTAL_SCANS}"
+          echo "[*] 目标 ASN: ${TARGET_ASN} | IP 数量: ${TOTAL_IPS} | 端口数量: ${PORT_COUNT} | 预计总扫描数: ${TOTAL_SCANS}"
           echo "[*] 正在运行 Masscan 探活 (设定发包速率: ${{ inputs.masscan_rate_input }} pps)..."
           
           # 3. 运行 Masscan 探活并在终端打印百分比进度
