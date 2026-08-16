@@ -130,7 +130,21 @@ jobs:
           ulimit -n 65535
           python "脚本/check_cf_asn.py" "${{ inputs.target_input }}" "${{ inputs.ports_input }}" masscan_out.json
 
+      - name: Check if valid result files exist
+        id: check_files
+        run: |
+          # 过滤排除了 targets.txt，只查找大于 0 字节（非空）的 txt 结果文件
+          files=$(find . -maxdepth 3 -name "*.txt" -not -name "targets.txt" -size +0c)
+          if [ -n "$files" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "[*] 检测到有有效输出结果，准备提交代码。"
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "[!] 未检测到有效数据，自动忽略本次提交。"
+          fi
+
       - name: Commit and Push TXT Results
+        if: steps.check_files.outputs.has_changes == 'true'
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Update scanned ASN txt files [skip ci]"
