@@ -141,13 +141,22 @@ jobs:
           ulimit -n 65535
           python "脚本/check_cf_asn.py" "${{ inputs.target_input }}" "${{ inputs.ports_input }}" masscan_out.json
           
-          # 自动清理 0 字节的空 txt 文件，防止误提交
+          # 自动清理 0 字节的空 txt 文件，防止空结果占用空间
           find . -maxdepth 3 -name "*.txt" -size 0 -delete
 
       - name: Commit and Push TXT Results
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "Update scanned ASN txt files [skip ci]"
-          # 仅匹配 txt 文件，并通过 Git pathspec 语法排除 targets.txt
-          file_pattern: "*.txt **/*.txt :(exclude)targets.txt"
-          skip_dirty_check: true
+        run: |
+          # 暂存所有的 txt 文件，但剔除中间文件 targets.txt
+          git add "*.txt" "**/*.txt" 2>/dev/null || true
+          git reset -- targets.txt 2>/dev/null || true
+
+          # 判断是否有暂存的有效 txt 结果更新
+          if git diff --cached --quiet; then
+            echo "[!] 没有检测到有效的 txt 结果文件更新，直接跳过提交。"
+          else
+            echo "[*] 检测到有效 txt 结果文件更新，正在提交..."
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "Update scanned ASN txt files [skip ci]"
+            git push
+          fi
