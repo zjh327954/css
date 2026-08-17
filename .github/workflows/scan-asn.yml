@@ -145,11 +145,11 @@ jobs:
         run: |
           HAS_VALID_IP=false
 
-          # 1. 暂存 优选反代ip 目录下的变动，让 git 捕捉到本次新建/修改的文件
-          git add 优选反代ip/ 2>/dev/null || true
+          # 1. 强制将仓库所有变动暂存（自动无视 优选反代IP/优选反代ip 的大小写差异）
+          git add -A
 
-          # 2. 只针对本次扫描【产生变动】的 txt 文件进行精确检查
-          for f in $(git diff --cached --name-only | grep '^优选反代ip/.*\.txt$'); do
+          # 2. 仅针对本次变动的 txt 文件进行校验
+          for f in $(git diff --cached --name-only | grep '\.txt$' | grep -v 'targets.txt' | grep -v 'requirements.txt'); do
             if [ -s "$f" ] && grep -E -q '([0-9]{1,3}\.){3}[0-9]{1,3}' "$f"; then
               HAS_VALID_IP=true
               echo "[+] 本次更新有效文件: $f"
@@ -172,4 +172,4 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Update scanned ASN txt files [skip ci]"
-          file_pattern: "优选反代ip/*.txt"
+          file_pattern: "**/*.txt"
