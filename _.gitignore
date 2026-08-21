@@ -1,0 +1,13 @@
+# 临时文件
+.tmp/
+scan_info.json
+masscan_out.json
+targets.txt
+masscan_result.txt
+
+# Python
+__pycache__/
+*.pyc
+
+# 系统
+.DS_Store
