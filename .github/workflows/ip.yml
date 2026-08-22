@@ -35,7 +35,7 @@ jobs:
 
       - name: 运行 Python 脚本解析 IP:端口
         run: |
-          python3 main.py "" "" masscan_out.json > result.txt
+          python3 ip.py "" "" masscan_out.json > result.txt
 
       - name: 控制台展示结果
         run: |
