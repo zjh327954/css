@@ -1,0 +1,48 @@
+name: '端口扫描'
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ip:
+        description: '扫描目标 (例如: 1.1.1.1/24 或 AS203923)'
+        required: true
+        default: '1.1.1.1/24'
+      ports:
+        description: '扫描端口 (例如: 443,8443)'
+        required: true
+        default: '443,8443'
+      rate:
+        description: '扫描发包速率 (rate)'
+        required: true
+        default: '10000'
+
+jobs:
+  scan-and-parse:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出仓库代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Masscan 和 Python 环境
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y masscan python3
+
+      - name: 执行 Masscan 扫描
+        run: |
+          sudo masscan ${{ github.event.inputs.target_ip }} -p${{ github.event.inputs.ports }} --rate=${{ github.event.inputs.rate }} -oJ masscan_out.json
+
+      - name: 运行 Python 脚本解析 IP:端口
+        run: |
+          python3 main.py "" "" masscan_out.json > result.txt
+
+      - name: 控制台展示结果
+        run: |
+          cat result.txt
+
+      - name: 上传提取到的结果文件 (Artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ip-ports-result
+          path: result.txt
