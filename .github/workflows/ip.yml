@@ -1,4 +1,5 @@
-name: Masscan '端口扫描'
+name: '端口扫描'
+
 on:
   workflow_dispatch:
     inputs:
@@ -28,17 +29,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y masscan python3
 
-      - name: 执行 Masscan 扫描 (精简进度显示)
+      - name: 执行 Masscan 扫描
         run: |
-          sudo masscan ${{ github.event.inputs.target_ip }} \
+          # 清理历史旧文件
+          rm -f masscan_out.json result.txt
+          
+          # 执行扫描，通过 tr 转换退格符并过滤出 10% 整数梯度的进度屏显
+          sudo stdbuf -oL masscan ${{ github.event.inputs.target_ip }} \
             -p${{ github.event.inputs.ports }} \
             --rate=${{ github.event.inputs.rate }} \
-            --status-interval 10 \
-            -oJ masscan_out.json | awk 'NR%10==1 || /10.00%|20.00%|30.00%|40.00%|50.00%|60.00%|70.00%|80.00%|90.00%|100.00%/'
+            -oJ masscan_out.json 2>&1 | tr '\r' '\n' | grep -E "(10\.00%|20\.00%|30\.00%|40\.00%|50\.00%|60\.00%|70\.00%|80\.00%|90\.00%|100\.00%)" || true
 
       - name: 运行 Python 脚本解析 IP:端口
         run: |
-          python3 脚本/ip.py "" "" masscan_out.json > result.txt
+          if [ -f masscan_out.json ]; then
+            python3 脚本/ip.py "" "" masscan_out.json > result.txt
+          else
+            echo "[-] 扫描未生成任何有效数据！"
+            exit 1
+          fi
 
       - name: 控制台展示结果
         run: |
