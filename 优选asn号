@@ -74,5 +74,4 @@ AS132203     2,694,144      199          Tencent Cloud（腾讯云）           
 AS14061      3,204,096      3,147        DigitalOcean（数字海洋）                              三网
 AS4760       4,133,888      32           PCCW Global / HKT（电讯盈科）                         三网
 AS31898      5,779,456      679          Oracle Cloud（甲骨文云）                              三网
-AS45102      11,017,216     254          Alibaba Cloud（阿里云）                               三网
-AS45090      12,607,488     10           Tencent Cloud（腾讯云）                               三网不推荐扫
+AS45102      11,017,216     254          Alibaba Cloud（阿里云）                               三网        
