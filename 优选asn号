@@ -1,76 +1,78 @@
-AS203923    512          12      HOYOVERSE（米哈游）                              移动
-AS151419    1,280        8       LINKLESS COMMUNICATIONS LIMITED                 移动
-AS139923    2,304        1       ABCCLOUD SDN.BHD.                               三网
-AS976       3,840        26      CoreNET Inc.                                    电信联通
-AS32519     4,096        7       DMIT Cloud Services                             三网
-AS142433    5,632        19      DATAWAVE GLOBAL LLC                             移动
-AS140096    6,400        1       JINX CO., LIMITED                               移动
-AS396856    6,656        3       Sharon Networks, LLC                            三网
-AS211392    6,656        9       SoftBank（软银）                                三网
-AS213169    6,912        41      Catixs-Edge                                     移动
-AS400464    7,168        25      VMISS Inc.                                      移动
-AS402279    7,424        11      Geoscry Network LLC                             移动
-AS209554    8,192        2       ISIF-AS                                         三网
-AS36530     8,448        3       IDC Cube                                        移动
-AS212336    8,704        116     BYTEVIRT LLC                                    三网
-AS203090    8,960        27      BitsFlowCloud                                   移动
-AS401615    8,960        31      ACCK LLC                                        移动电信
-AS151338    8,960        38      POLONETWORK LIMITED                             移动联通
-AS46783     10,240       29      EASY LINK LLC                                   三网
-AS150452    11,008       2       LANDUPS LIMITED                                 三网
-AS18526     11,008       16      DDPS Networks, LLC                              移动
-AS6233      11,008       45      xTom                                            三网
-AS205548    11,008       50      Zouter                                          移动
-AS24544     14,336       4       Law's Cloud Infrastructure Limited              三网
-AS134835    14,336       15      Starry Network Limited                          移动
-AS63150     14,336       65      BAGE CLOUD LLC                                  移动
-AS152918    15,360       8       Liberally Network LLC                           移动
-AS967       15,360       71      VMISS Inc.                                      三网
-AS134365    16,384       1       Ansheng Network Technology Co., Limited         三网
-AS137897    17,408       29      PAN-LIAN TECHNOLOGY CO., LIMITED                电信移动
-AS8888      18,432       25      xTom Pty Ltd                                    三网
-AS133752    19,456       7       LEASEWEB HONG KONG LIMITED                      移动
-AS6134      24,576       17      XNNET LLC                                       三网
-AS42960     25,600       19      VH Global Limited                               三网
-AS400618    26,624       28      Prime Security Corp.                            移动
-AS7488      27,648       103     CNServer LLC                                    三网
-AS3214      31,744       50      xTom GmbH                                       三网
-AS3258      34,816       86      xTom Japan Corporation（xTom日本）              三网
-AS36007     37,888       53      Kamatera, Inc.                                  移动
-AS63473     39,936       76      HostHatch, LLC                                  移动
-AS139659    39,936       124     LUCIDACLOUD LIMITED                             三网
-AS154321    44,032       7       CORENET CLOUD SDN. BHD.                         三网
-AS149440    46,080       230     Evoxt Sdn. Bhd.                                 三网
-AS137535    48,128       13      JT TELECOM INTERNATIONAL PTE.LTD.               三网
-AS21887     52,224       10      Fiber Logic Inc.                                三网
-AS38136     52,224       41      Akari Networks                                  电信移动
-AS61112     53,248       168     AkileCloud Network                              三网
-AS45187     66,816       1       Rackspace（香港机架空间）                        电信联通
-AS49304     74,752       14      SAKURA-AS（樱花互联网）                         三网
-AS26383     84,992       494     Baxet Group Inc.                                三网
-AS932       96,256       208     XNNET LLC                                       三网
-AS906       123,904      1,058   DMIT Cloud Services                             三网
-AS401701    130,048      22      cognetcloud INC                                 三网
-AS138195    160,768      7       MOACK.Co.LTD                                    三网
-AS140227    173,056      16      Hong Kong Communications International Co., Limited 三网
-AS135377    197,632      15      UCLOUD INFORMATION TECHNOLOGY (HK) LIMITED（优刻得香港） 三网
-AS55933     215,040      35      Cloudie Limited                                 三网
-AS400619    217,088      5       AROSSCLOUD INC.                                 三网
-AS979       231,424      258     NetLab Global                                   三网
-AS8796      242,688      78      FASTNET DATA INC                                三网
-AS139341    282,624      15      ACE                                             移动
-AS152194    305,152      9       CTG Server Limited                              三网
-AS18186     339,968      91      Nebula Global LLC                               三网
-AS54801     373,760      10      Zillion Network Inc.                            三网
-AS30058     394,240      232     FDCservers.net                                  三网
-AS40065     761,856      60      CNSERVERS LLC                                   三网
-AS136907    1,188,864    13      HUAWEI CLOUDS（华为云）                          三网
-AS63949     1,392,640    417     Akamai Connected Cloud（Linode / 阿卡迈）       三网
-AS20473     1,502,208    8,947   Choopa LLC（Vultr）                             三网
-AS9009      1,655,808    227     M247                                            三网
-AS132203    2,694,144    199     Tencent Cloud（腾讯云）                          三网
-AS14061     3,204,096    3,216   DigitalOcean（数字海洋）                         三网
-AS4760      4,133,888    32      PCCW Global / HKT（电讯盈科）                    三网
-AS31898     5,779,456    1,486   Oracle Cloud（甲骨文云）                         三网
-AS45102     11,017,216   254     Alibaba Cloud（阿里云）                          三网
-AS45090     12,607,488   10      Tencent Cloud（腾讯云）                          三网不推荐扫
+ASN号        IPv4数量       反代数    所属机构/公司名称                                      运营商备注
+--------------------------------------------------------------------------------------------------------------
+AS203923     512            12           HOYOVERSE（米哈游）                                  移动
+AS151419     1,280          8            LINKLESS COMMUNICATIONS LIMITED（凌克通信）          移动
+AS139923     2,304          1            ABCCLOUD SDN.BHD.（ABC云）                           三网
+AS976        3,840          26           CoreNET Inc.（CoreNET）                              电信联通
+AS32519      4,096          7            DMIT Cloud Services（DMIT）                          三网
+AS142433     5,632          19           DATAWAVE GLOBAL LLC（数据波全球）                    移动
+AS140096     6,400          1            JINX CO., LIMITED（JINX）                            移动
+AS396856     6,656          3            Sharon Networks, LLC（莎伦网络）                     三网
+AS211392     6,656          9            SoftBank（软银）                                     三网
+AS213169     6,912          41           Catixs-Edge                                          移动
+AS400464     7,168          25           VMISS Inc.（VMISS）                                  移动
+AS402279     7,424          11           Geoscry Network LLC                                  移动
+AS209554     8,192          2            ISIF-AS                                              三网
+AS36530      8,448          3            IDC Cube（IDC立方）                                  移动
+AS212336     8,704          116          BYTEVIRT LLC（字节虚拟）                              三网
+AS203090     8,960          27           BitsFlowCloud                                        移动
+AS401615     8,960          31           ACCK LLC                                             移动电信
+AS151338     8,960          38           POLONETWORK LIMITED                                  移动联通
+AS46783      10,240         29           EASY LINK LLC                                        三网
+AS150452     11,008         2            LANDUPS LIMITED                                      三网
+AS18526      11,008         16           DDPS Networks, LLC                                   移动
+AS6233       11,008         45           xTom                                                 三网
+AS205548     11,008         50           Zouter                                               移动
+AS24544      14,336         4            Law's Cloud Infrastructure Limited                   三网
+AS134835     14,336         15           Starry Network Limited（星云网络）                    移动
+AS63150      14,336         65           BAGE CLOUD LLC                                       移动
+AS152918     15,360         8            Liberally Network LLC                                移动
+AS967        15,360         71           VMISS Inc.（VMISS）                                  三网
+AS134365     16,384         1            Ansheng Network Technology Co., Limited（安盛网络科技） 三网
+AS137897     17,408         29           PAN-LIAN TECHNOLOGY CO., LIMITED（泛联科技）          电信移动
+AS8888       18,432         25           xTom Pty Ltd                                         三网
+AS133752     19,456         7            LEASEWEB HONG KONG LIMITED（Leaseweb香港）           移动
+AS6134       24,576         17           XNNET LLC                                            三网
+AS42960      25,600         19           VH Global Limited                                    三网
+AS400618     26,624         28           Prime Security Corp.                                 移动
+AS7488       27,648         103          CNServer LLC                                         三网
+AS3214       31,744         50           xTom GmbH                                            三网
+AS3258       34,816         86           xTom Japan Corporation（xTom日本）                    三网
+AS36007      37,888         53           Kamatera, Inc.                                       移动
+AS63473      39,936         76           HostHatch, LLC                                       移动
+AS139659     39,936         124          LUCIDACLOUD LIMITED                                  三网
+AS154321     44,032         7            CORENET CLOUD SDN. BHD.                              三网
+AS149440     46,080         230          Evoxt Sdn. Bhd.                                      三网
+AS137535     48,128         13           JT TELECOM INTERNATIONAL PTE.LTD.                    三网
+AS21887      52,224         10           Fiber Logic Inc.                                     三网
+AS38136      52,224         41           Akari Networks                                       电信移动
+AS61112      53,248         168          AkileCloud Network（Akile云）                         三网
+AS45187      66,816         1            Rackspace（香港机架空间）                             电信联通
+AS49304      74,752         14           SAKURA-AS（樱花互联网）                              三网
+AS26383      84,992         494          Baxet Group Inc.                                     三网
+AS932        96,256         208          XNNET LLC                                            三网
+AS906        123,904        1,058        DMIT Cloud Services（DMIT）                          三网
+AS401701     130,048        22           cognetcloud INC                                      三网
+AS138195     160,768        7            MOACK.Co.LTD                                         三网
+AS140227     173,056        16           Hong Kong Communications International Co., Limited（香港通信国际） 三网
+AS135377     197,632        15           UCLOUD INFORMATION TECHNOLOGY (HK) LIMITED（优刻得香港） 三网
+AS55933      215,040        35           Cloudie Limited                                      三网
+AS400619     217,088        5            AROSSCLOUD INC.                                      三网
+AS979        231,424        258          NetLab Global                                        三网
+AS8796       242,688        78           FASTNET DATA INC                                     三网
+AS139341     282,624        15           ACE                                                  移动
+AS152194     305,152        9            CTG Server Limited                                   三网
+AS18186      339,968        91           Nebula Global LLC（星云全球）                         三网
+AS54801      373,760        10           Zillion Network Inc.                                 三网
+AS30058      394,240        232          FDCservers.net（FDC服务器）                          三网
+AS40065      761,856        60           CNSERVERS LLC（CNServers）                           三网
+AS136907     1,188,864      13           HUAWEI CLOUDS（华为云）                               三网
+AS63949      1,392,640      417          Akamai Connected Cloud（Linode / 阿卡迈）             三网
+AS20473      1,502,208      8,947        Choopa LLC（Vultr）                                  三网
+AS9009       1,655,808      227          M247                                                 三网
+AS132203     2,694,144      199          Tencent Cloud（腾讯云）                               三网
+AS14061      3,204,096      3,216        DigitalOcean（数字海洋）                              三网
+AS4760       4,133,888      32           PCCW Global / HKT（电讯盈科）                         三网
+AS31898      5,779,456      1,486        Oracle Cloud（甲骨文云）                              三网
+AS45102      11,017,216     254          Alibaba Cloud（阿里云）                               三网
+AS45090      12,607,488     10           Tencent Cloud（腾讯云）                               三网不推荐扫
