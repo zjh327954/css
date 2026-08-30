@@ -10,11 +10,11 @@ on:
       ports_input:
         description: '需要扫描的端口号 (多个端口用空格或逗号隔开，如 443 8443 或 1-65535)'
         required: true
-        default: '443 8443'
+        default: '443'
       masscan_rate_input:
         description: 'Masscan 发包速率 (pps，推荐 5000 ~ 15000)'
         required: true
-        default: '2000'
+        default: '10000'
       py_concurrency_input:
         description: 'Python 握手并发数 (单进程并发，推荐 500 ~ 2000)'
         required: true
