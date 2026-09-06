@@ -60,8 +60,8 @@ STAGE3_TIMEOUT = 1.2
 # 阶段 4：API 精筛
 CF_API_URL = "https://api.090227.xyz/check"
 STAGE4_CONCURRENCY = int(os.getenv("STAGE4_CONCURRENCY", "32"))
-STAGE4_TIMEOUT = 15
-STAGE4_RETRIES = 3  # API 失败重试次数
+STAGE4_TIMEOUT = 5
+STAGE4_RETRIES = 1  # API 失败重试次数
 STAGE4_RETRY_DELAY = 1  # 重试间隔(秒)
 
 # CPU 核心数
