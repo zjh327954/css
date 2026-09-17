@@ -5,8 +5,10 @@ masscan_out.json
 targets.txt
 masscan_result.txt
 
-# iptest 工具与中间文件
+# iptest 工具与中间离线库
 locations.json
+GeoLite2-ASN.mmdb
+GeoLite2-Country.mmdb
 .tmp_iptest_targets.txt
 .tmp_iptest_result.csv
 iptest
