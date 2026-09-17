@@ -184,7 +184,7 @@ jobs:
           IPTEST_SPEEDTEST: ${{ inputs.iptest_speedtest_input }}
         run: |
           ulimit -n 65535
-          python "脚本/cf_scan_api.py" "${{ inputs.target_input }}" "${{ inputs.ports_input }}" .tmp/masscan_out.json
+          python "脚本/cf_scan_api1.py" "${{ inputs.target_input }}" "${{ inputs.ports_input }}" .tmp/masscan_out.json
 
           # 清理空文件
           find . -maxdepth 3 -name "*.csv" -size 0 -delete
