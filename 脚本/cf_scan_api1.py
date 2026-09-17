@@ -58,7 +58,7 @@ STAGE2_TIMEOUT = 1.2
 # 阶段 3：自定义域名校验超时
 STAGE3_TIMEOUT = 1.2
 
-# 阶段 4：iptest 配置 (默认 0 不测速，仅测延迟与机房信息)
+# 阶段 4：iptest 参数配置 (默认 0 不测速，仅测延迟与机房信息)
 IPTEST_BIN = os.getenv("IPTEST_BIN", "iptest")
 IPTEST_SPEEDTEST = os.getenv("IPTEST_SPEEDTEST", "0")
 IPTEST_MAX_COROUTINES = os.getenv("IPTEST_MAX_COROUTINES", "100")
@@ -345,7 +345,7 @@ async def main():
     tmp_ip_file = os.path.abspath(os.path.join(BASE_DIR, ".tmp_iptest_targets.txt"))
     tmp_out_csv = os.path.abspath(os.path.join(BASE_DIR, ".tmp_iptest_result.csv"))
 
-    # 生成 iptest 要求的 IP 列表文件（每行：IP 端口）
+    # 生成 iptest 要求的输入格式（每行：IP 端口）
     with open(tmp_ip_file, "w", encoding="utf-8") as f:
         for ip, port in final_items:
             f.write(f"{ip} {port}\n")
