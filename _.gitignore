@@ -1,32 +1,19 @@
-# 临时文件
+# 扫描与临时数据
 .tmp/
 scan_info.json
 masscan_out.json
 targets.txt
 masscan_result.txt
 
-# iptest 临时文件与位置库
+# iptest 工具与中间文件
 locations.json
 .tmp_iptest_targets.txt
 .tmp_iptest_result.csv
 iptest
 
-# Python
+# Python 缓存
 __pycache__/
 *.pyc
 
-# 系统
-.DS_Store
-# 临时文件
-.tmp/
-scan_info.json
-masscan_out.json
-targets.txt
-masscan_result.txt
-
-# Python
-__pycache__/
-*.pyc
-
-# 系统
+# 系统文件
 .DS_Store
