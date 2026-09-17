@@ -1,4 +1,4 @@
-name: '测试'
+name: '测试版-CF反代扫描(iptest精筛)'
 
 on:
   workflow_dispatch:
@@ -46,6 +46,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+          cache: false
 
       - name: Install System Tools & Dependencies
         run: |
@@ -57,7 +58,6 @@ jobs:
           pip install cryptography uvloop aiohttp -q
 
           echo "[*] 正在获取并安装 Kwisma/iptest..."
-          # 优先尝试从 GitHub Releases 获取预编译包，若无匹配资产则直接 clone 源码极速编译
           INSTALLED=0
           RELEASE_URL=$(curl -sL https://api.github.com/repos/Kwisma/iptest/releases/latest | jq -r '.assets[]? | select(.name | test("linux.*amd64|amd64.*linux"; "i")) | .browser_download_url' | head -n 1)
           
@@ -80,7 +80,7 @@ jobs:
           fi
 
           if [ $INSTALLED -eq 0 ]; then
-            echo "[*] 未拉取到可用二进制，正在通过源码快速编译 Kwisma/iptest..."
+            echo "[*] 未拉取到可用二进制，正在通过源码编译 Kwisma/iptest..."
             git clone --depth 1 https://github.com/Kwisma/iptest.git .tmp_iptest_build
             cd .tmp_iptest_build
             go build -o iptest iptest.go
