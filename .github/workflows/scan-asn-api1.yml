@@ -90,8 +90,13 @@ jobs:
             rm -rf .tmp_iptest_build
           fi
 
-          echo "[+] iptest 检查: $(which iptest)"
-          echo "[+] 环境安装完毕！"
+          echo "[*] 提前预下载 iptest 离线数据库文件..."
+          # 预先下载地理及 ASN 库，避免在第四阶段运行时临时下载
+          wget -q -nc https://locations-adw.pages.dev/locations.json || true
+          wget -q -nc https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-ASN.mmdb || true
+          wget -q -nc https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb || true
+
+          echo "[+] iptest 安装及离线数据库预载完成！"
 
       - name: Run Masscan Probe
         run: |
@@ -184,7 +189,7 @@ jobs:
           IPTEST_SPEEDTEST: ${{ inputs.iptest_speedtest_input }}
         run: |
           ulimit -n 65535
-          python "脚本/cf_scan_api1.py" "${{ inputs.target_input }}" "${{ inputs.ports_input }}" .tmp/masscan_out.json
+          python "脚本/cf_scan_api.py" "${{ inputs.target_input }}" "${{ inputs.ports_input }}" .tmp/masscan_out.json
 
           # 清理空文件
           find . -maxdepth 3 -name "*.csv" -size 0 -delete
@@ -192,6 +197,7 @@ jobs:
       - name: Cleanup Temp Files
         run: |
           rm -rf .tmp
+          rm -f locations.json GeoLite2-ASN.mmdb GeoLite2-Country.mmdb
 
       - name: Commit and Push Results
         run: |
