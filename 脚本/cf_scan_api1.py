@@ -334,7 +334,7 @@ async def main():
     output_dir = os.path.join(BASE_DIR, "..", "优选反代ip") if os.path.basename(BASE_DIR) == "脚本" else os.path.join(BASE_DIR, "优选反代ip")
     os.makedirs(output_dir, exist_ok=True)
 
-    # ==================== 4. 第四阶段：调用 iptest 进行精测 ====================
+    # ==================== 4. 第四阶段：静默调用 iptest 生成 CSV ====================
     if not final_items:
         print("[-] 无有效目标，跳过 iptest 精测环节。", flush=True)
         return
@@ -345,13 +345,12 @@ async def main():
     tmp_ip_file = os.path.abspath(os.path.join(BASE_DIR, ".tmp_iptest_targets.txt"))
     tmp_out_csv = os.path.abspath(os.path.join(BASE_DIR, ".tmp_iptest_result.csv"))
 
-    # 生成 iptest 要求的输入格式（每行：IP 端口）
+    # 生成 iptest 输入格式（IP 端口）
     with open(tmp_ip_file, "w", encoding="utf-8") as f:
         for ip, port in final_items:
             f.write(f"{ip} {port}\n")
 
-    print(f"\n[4/4 第四阶段 iptest 精测] 启动 iptest 对 {len(final_items)} 个候选节点进行测试...", flush=True)
-    print(f"    测速模式: 下载测速协程={IPTEST_SPEEDTEST} (0表示不测速) | 并发协程={IPTEST_MAX_COROUTINES}", flush=True)
+    print(f"\n[4/4 第四阶段 iptest 精测] 启动 iptest 正在对 {len(final_items)} 个候选节点进行静默测试...", flush=True)
 
     iptest_cmd = [
         IPTEST_BIN,
@@ -363,19 +362,19 @@ async def main():
     ]
 
     try:
-        # 执行 iptest 工具
-        res = subprocess.run(iptest_cmd, check=False)
+        # 重定向 stdout 和 stderr 到 DEVNULL，完全静默运行，屏蔽刷屏日志
+        res = subprocess.run(iptest_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         if res.returncode == 0 and os.path.exists(tmp_out_csv) and os.path.getsize(tmp_out_csv) > 0:
             shutil.move(tmp_out_csv, final_csv_path)
-            print(f"[+] iptest 测试完毕，结果已保存至：{final_csv_path}", flush=True)
+            print(f"[+] iptest 测试完毕，结果已静默生成并导出至: {final_csv_path}", flush=True)
         else:
-            print(f"[-] iptest 执行异常 (退出码: {res.returncode}) 或未生成结果，正在输出基础可用列表作为兜底...", flush=True)
+            print(f"[-] iptest 执行未生成有效结果，正在写入基础可用目标作为兜底...", flush=True)
             with open(final_csv_path, "w", encoding="utf-8-sig") as f:
                 f.write("IP地址,端口号,TLS\n")
                 for ip, port in final_items:
                     f.write(f"{ip},{port},TRUE\n")
     except Exception as e:
-        print(f"[-] 调用 iptest 过程发生错误: {e}", flush=True)
+        print(f"[-] 调用 iptest 过程异常: {e}", flush=True)
         with open(final_csv_path, "w", encoding="utf-8-sig") as f:
             f.write("IP地址,端口号,TLS\n")
             for ip, port in final_items:
