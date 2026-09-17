@@ -95,7 +95,7 @@ jobs:
           wget -q -nc https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-ASN.mmdb || true
           wget -q -nc https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb || true
 
-          echo "[+] 环境安装完毕！"
+          echo "[+] iptest 安装及离线数据库预载完成！"
 
       - name: Scan and Process Targets Loop
         env:
@@ -107,7 +107,6 @@ jobs:
           mkdir -p .tmp
           mkdir -p "优选反代ip"
 
-          # 规范化目标列表：把逗号替换成空格，逐个读取遍历
           TARGET_LIST=$(echo "${{ inputs.target_input }}" | tr ',' ' ')
 
           for TARGET in $TARGET_LIST; do
@@ -117,47 +116,49 @@ jobs:
 
             rm -f .tmp/targets.txt .tmp/scan_info.json .tmp/masscan_out.json
 
-            # 1. 获取并解析单个 ASN 的 CIDR
-            python -c "
-            import sys, json, urllib.request, ipaddress, re
+            # 使用 EOF 写入独立的解析脚本，彻底规避缩进语法报错
+            cat << 'EOF' > .tmp/resolve_target.py
+import sys, json, urllib.request, ipaddress, re
 
-            target_raw = '${TARGET}'.strip()
-            cidrs = []
-            asn_info = target_raw
+target_raw = sys.argv[1].strip()
+cidrs = []
+asn_info = target_raw
 
-            if target_raw.upper().startswith('AS'):
-                asn = target_raw.upper().replace('AS', '').strip()
-                asn_info = f'AS{asn}'
-                try:
-                    url = f'https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{asn}'
-                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                    with urllib.request.urlopen(req, timeout=10) as resp:
-                        data = json.loads(resp.read().decode())
-                        for p in data.get('data', {}).get('prefixes', []):
-                            prefix = p.get('prefix')
-                            if prefix and ':' not in prefix:
-                                cidrs.append(prefix)
-                except Exception as e:
-                    print(f'获取 ASN 网段失败: {e}')
-            else:
-                cidrs.append(target_raw)
+if target_raw.upper().startswith("AS"):
+    asn = target_raw.upper().replace("AS", "").strip()
+    asn_info = f"AS{asn}"
+    try:
+        url = f"https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{asn}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+            for p in data.get("data", {}).get("prefixes", []):
+                prefix = p.get("prefix")
+                if prefix and ":" not in prefix:
+                    cidrs.append(prefix)
+    except Exception as e:
+        print(f"获取 ASN 网段失败: {e}")
+else:
+    cidrs.append(target_raw)
 
-            total_ips = 0
-            valid_cidrs = []
-            for c in cidrs:
-                try:
-                    net = ipaddress.ip_network(c, strict=False)
-                    total_ips += net.num_addresses
-                    valid_cidrs.append(str(net))
-                except Exception:
-                    pass
+total_ips = 0
+valid_cidrs = []
+for c in cidrs:
+    try:
+        net = ipaddress.ip_network(c, strict=False)
+        total_ips += net.num_addresses
+        valid_cidrs.append(str(net))
+    except Exception:
+        pass
 
-            with open('.tmp/targets.txt', 'w') as f:
-                for c in valid_cidrs:
-                    f.write(c + '\n')
-            with open('.tmp/scan_info.json', 'w') as f:
-                json.dump({'total_ips': total_ips, 'asn': asn_info}, f)
-            "
+with open(".tmp/targets.txt", "w") as f:
+    for c in valid_cidrs:
+        f.write(c + "\n")
+with open(".tmp/scan_info.json", "w") as f:
+    json.dump({"total_ips": total_ips, "asn": asn_info}, f)
+EOF
+
+            python .tmp/resolve_target.py "${TARGET}"
 
             TOTAL_IPS=$(python -c "import json; print(json.load(open('.tmp/scan_info.json'))['total_ips'])")
             if [ "$TOTAL_IPS" -eq 0 ]; then
@@ -168,7 +169,7 @@ jobs:
             PORTS=$(echo "${{ inputs.ports_input }}" | tr ' ' ',')
             echo "[*] ${TARGET} 对应 IP 数: ${TOTAL_IPS}，开始 Masscan 探活..."
 
-            # 2. Masscan 探活
+            # Masscan 探活
             sudo masscan -iL .tmp/targets.txt -p "$PORTS" --rate "${{ inputs.masscan_rate_input }}" --wait 0 -oJ .tmp/masscan_out.json > /dev/null 2>&1 || true
 
             if [ ! -s .tmp/masscan_out.json ]; then
@@ -176,7 +177,7 @@ jobs:
               continue
             fi
 
-            # 3. 运行 Python 脚本处理当前 ASN 并生成独立的 CSV
+            # 运行 Python 脚本处理当前 ASN 并生成独立的 CSV
             python "脚本/cf_scan_api2.py" "${TARGET}" "${{ inputs.ports_input }}" .tmp/masscan_out.json
 
             echo "[+] ${TARGET} 处理完毕！"
@@ -195,7 +196,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # 仅跟踪并提交 CSV 文件
+          # 仅提交结果 CSV 文件
           git add "*.csv" "**/*.csv" 2>/dev/null || true
 
           if git diff --cached --quiet; then
