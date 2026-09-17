@@ -1,4 +1,4 @@
-name: '测试版-CF反代扫描(iptest精筛)'
+name: '测试'
 
 on:
   workflow_dispatch:
