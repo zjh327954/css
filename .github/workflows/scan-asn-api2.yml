@@ -177,7 +177,7 @@ jobs:
             fi
 
             # 3. 运行 Python 脚本处理当前 ASN 并生成独立的 CSV
-            python "脚本/cf_scan_api.py" "${TARGET}" "${{ inputs.ports_input }}" .tmp/masscan_out.json
+            python "脚本/cf_scan_api2.py" "${TARGET}" "${{ inputs.ports_input }}" .tmp/masscan_out.json
 
             echo "[+] ${TARGET} 处理完毕！"
           done
