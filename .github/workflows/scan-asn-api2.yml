@@ -137,7 +137,7 @@ jobs:
             fi
 
             # 3. 运行主筛选及 iptest 脚本
-            python "脚本/cf_scan_api2.py" "${TARGET}" "${{ inputs.ports_input }}" .tmp/masscan_out.json
+            python "脚本/cf_scan_api3.py" "${TARGET}" "${{ inputs.ports_input }}" .tmp/masscan_out.json
 
             echo "[+] ${TARGET} 处理完毕！"
           done
