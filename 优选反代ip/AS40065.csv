@@ -1,0 +1,48 @@
+IP地址,端口号,TLS,数据中心,IP位置,地区,城市,地区(中文),国家,城市(中文),国旗,网络延迟,出站IP,出站IP类型,出站IP位置,IPS类型,ASN号码,ASN组织,访问协议,TLS版本,SNI,HTTP版本,WARP,Gateway,RBI,密钥交换,时间戳
+103.99.115.56,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,58 ms,103.99.115.56,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+185.186.146.220,8443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,58 ms,185.186.146.220,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+23.225.58.242,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,58 ms,23.225.58.242,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+202.91.35.43,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,58 ms,202.91.35.43,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+23.224.69.114,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,59 ms,23.224.69.114,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+5.181.219.156,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,59 ms,5.181.219.156,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+2.56.255.237,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,60 ms,2.56.255.237,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+185.201.227.105,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,60 ms,185.201.227.105,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+45.12.90.230,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,60 ms,2a14:640:7:cf14::1,IPv6,美国,N/A,199959,Gwy It Pty Ltd,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+212.103.62.143,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,60 ms,212.103.62.143,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+212.103.62.165,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,60 ms,212.103.62.165,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+212.103.62.64,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,60 ms,212.103.62.64,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+45.12.88.129,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,60 ms,45.12.88.129,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+202.91.35.174,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,61 ms,202.91.35.174,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+23.224.69.118,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,62 ms,23.224.69.114,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+103.99.178.14,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,66 ms,103.99.178.14,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+23.224.69.116,8443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,67 ms,23.224.69.114,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+185.186.147.191,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,67 ms,185.186.147.191,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+202.91.33.147,8443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,67 ms,2a14:640:3:8370::1,IPv6,美国,N/A,199959,Gwy It Pty Ltd,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+23.224.69.114,8443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,68 ms,23.224.69.114,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+91.217.139.70,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,68 ms,91.217.139.70,IPv4,香港,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+23.224.69.118,8443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,68 ms,23.224.69.114,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+23.224.69.115,8443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,68 ms,23.224.69.114,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+23.225.58.244,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,68 ms,23.225.58.242,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+185.238.248.159,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,69 ms,185.238.248.159,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+45.12.88.57,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,69 ms,45.12.88.57,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+45.12.88.150,443,true,PHX,US,North America,Phoenix,北美洲,美国,菲尼克斯,🇺🇸,69 ms,2a14:640:5:35c0::1,IPv6,美国,N/A,199959,Gwy It Pty Ltd,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+2.56.255.61,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,69 ms,2.56.255.61,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+185.194.148.37,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,70 ms,185.194.148.37,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+2.56.255.237,8443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,70 ms,2.56.255.237,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+193.9.44.104,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,70 ms,193.9.44.104,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+185.201.227.206,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,71 ms,185.201.227.206,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+23.224.69.115,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,71 ms,23.224.69.114,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+172.247.244.74,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,71 ms,172.247.244.74,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+23.224.194.106,8443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,72 ms,23.224.194.106,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+103.94.185.32,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,72 ms,103.94.185.32,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+23.225.58.245,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,78 ms,23.225.58.242,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+23.224.69.117,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,78 ms,23.224.69.114,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+23.225.58.243,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,78 ms,23.225.58.242,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+185.186.147.125,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,78 ms,185.186.147.125,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+23.224.69.117,8443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,79 ms,23.224.69.114,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+91.110.212.20,8443,true,HKG,HK,Asia Pacific,Hong Kong,亚洲,香港,香港,🇭🇰,207 ms,91.110.212.20,IPv4,美国,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+103.103.245.180,8443,true,HKG,HK,Asia Pacific,Hong Kong,亚洲,香港,香港,🇭🇰,210 ms,103.103.245.180,IPv4,香港,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+103.172.134.71,8443,true,HKG,HK,Asia Pacific,Hong Kong,亚洲,香港,香港,🇭🇰,213 ms,103.172.134.71,IPv4,香港,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+103.103.245.105,443,true,HKG,HK,Asia Pacific,Hong Kong,亚洲,香港,香港,🇭🇰,213 ms,103.103.245.105,IPv4,香港,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+103.20.223.150,443,true,HKG,HK,Asia Pacific,Hong Kong,亚洲,香港,香港,🇭🇰,216 ms,103.20.223.150,IPv4,香港,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
+103.20.222.136,443,true,HKG,HK,Asia Pacific,Hong Kong,亚洲,香港,香港,🇭🇰,217 ms,103.20.222.136,IPv4,香港,N/A,40065,CNSERVERS LLC,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789804400.000
