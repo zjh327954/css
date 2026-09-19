@@ -1,0 +1,16 @@
+IP地址,端口号,TLS,数据中心,IP位置,地区,城市,地区(中文),国家,城市(中文),国旗,网络延迟,出站IP,出站IP类型,出站IP位置,IPS类型,ASN号码,ASN组织,访问协议,TLS版本,SNI,HTTP版本,WARP,Gateway,RBI,密钥交换,时间戳
+142.248.139.25,443,true,NRT,JP,Asia Pacific,Tokyo,亚洲,日本,东京,🇯🇵,98 ms,142.248.139.25,IPv4,日本,N/A,137535,JT TELECOM INTERNATIONAL PTE.LTD.,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789796168.000
+177.3.90.144,443,true,NRT,JP,Asia Pacific,Tokyo,亚洲,日本,东京,🇯🇵,98 ms,177.3.90.144,IPv4,日本,N/A,137535,JT TELECOM INTERNATIONAL PTE.LTD.,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789796168.000
+177.2.185.217,443,true,NRT,JP,Asia Pacific,Tokyo,亚洲,日本,东京,🇯🇵,98 ms,177.2.185.217,IPv4,日本,N/A,137535,JT TELECOM INTERNATIONAL PTE.LTD.,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789796168.000
+142.248.137.22,443,true,NRT,JP,Asia Pacific,Tokyo,亚洲,日本,东京,🇯🇵,98 ms,142.248.137.22,IPv4,日本,N/A,137535,JT TELECOM INTERNATIONAL PTE.LTD.,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789796168.000
+142.248.137.32,443,true,NRT,JP,Asia Pacific,Tokyo,亚洲,日本,东京,🇯🇵,98 ms,142.248.137.32,IPv4,日本,N/A,137535,JT TELECOM INTERNATIONAL PTE.LTD.,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789796168.000
+177.3.91.127,8443,true,NRT,JP,Asia Pacific,Tokyo,亚洲,日本,东京,🇯🇵,98 ms,177.3.91.127,IPv4,日本,N/A,137535,JT TELECOM INTERNATIONAL PTE.LTD.,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789796168.000
+38.47.198.28,443,true,NRT,JP,Asia Pacific,Tokyo,亚洲,日本,东京,🇯🇵,98 ms,38.47.198.28,IPv4,日本,N/A,137535,JT TELECOM INTERNATIONAL PTE.LTD.,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789796168.000
+177.3.89.211,443,true,NRT,JP,Asia Pacific,Tokyo,亚洲,日本,东京,🇯🇵,99 ms,177.3.89.211,IPv4,日本,N/A,137535,JT TELECOM INTERNATIONAL PTE.LTD.,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789796168.000
+177.3.89.69,443,true,NRT,JP,Asia Pacific,Tokyo,亚洲,日本,东京,🇯🇵,99 ms,177.3.89.69,IPv4,日本,N/A,137535,JT TELECOM INTERNATIONAL PTE.LTD.,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789796168.000
+177.2.187.28,443,true,NRT,JP,Asia Pacific,Tokyo,亚洲,日本,东京,🇯🇵,99 ms,2a09:bac5:4303:dc::16:224,IPv6,日本,N/A,13335,"Cloudflare, Inc.",https,TLSv1.3,plaintext,http/1.1,on,off,off,X25519MLKEM768,1789796168.000
+142.248.139.237,443,true,NRT,JP,Asia Pacific,Tokyo,亚洲,日本,东京,🇯🇵,99 ms,142.248.139.237,IPv4,日本,N/A,137535,JT TELECOM INTERNATIONAL PTE.LTD.,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789796168.000
+177.3.90.10,443,true,NRT,JP,Asia Pacific,Tokyo,亚洲,日本,东京,🇯🇵,99 ms,177.3.90.10,IPv4,日本,N/A,137535,JT TELECOM INTERNATIONAL PTE.LTD.,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789796168.000
+38.181.52.16,443,true,SIN,SG,Asia Pacific,Singapore,亚洲,新加坡,新加坡,🇸🇬,160 ms,38.181.52.16,IPv4,新加坡,N/A,137535,JT TELECOM INTERNATIONAL PTE.LTD.,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789796168.000
+177.5.78.92,443,true,HKG,SG,Asia Pacific,Hong Kong,亚洲,香港,香港,🇭🇰,164 ms,177.5.78.92,IPv4,新加坡,N/A,137535,JT TELECOM INTERNATIONAL PTE.LTD.,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789796168.000
+45.194.18.109,443,true,SIN,SG,Asia Pacific,Singapore,亚洲,新加坡,新加坡,🇸🇬,181 ms,45.194.18.109,IPv4,新加坡,N/A,137535,JT TELECOM INTERNATIONAL PTE.LTD.,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1789796168.000
