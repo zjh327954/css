@@ -1,0 +1,19 @@
+IP地址,端口号,TLS,数据中心,IP位置,地区,城市,地区(中文),国家,城市(中文),国旗,网络延迟,出站IP,出站IP类型,出站IP位置,IPS类型,ASN号码,ASN组织,访问协议,TLS版本,SNI,HTTP版本,WARP,Gateway,RBI,密钥交换,时间戳
+43.170.25.96,443,true,IAD,US,North America,Dulles,北美洲,美国,杜勒斯,🇺🇸,29 ms,43.152.135.74,IPv4,新加坡,N/A,139341,ACE,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1792823267.000
+43.170.78.62,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,38 ms,101.33.21.81,IPv4,新加坡,N/A,139341,ACE,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1792823267.000
+43.170.82.92,443,true,LAX,US,North America,Los Angeles,北美洲,美国,洛杉矶,🇺🇸,40 ms,101.33.21.81,IPv4,新加坡,N/A,139341,ACE,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1792823267.000
+43.169.18.179,443,true,BOG,CO,South America,Bogota,南美洲,哥伦比亚,波哥大,🇨🇴,86 ms,43.152.184.124,IPv4,新加坡,N/A,139341,ACE,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1792823267.000
+43.174.218.1,443,true,BOG,CO,South America,Bogota,南美洲,哥伦比亚,波哥大,🇨🇴,86 ms,43.152.184.124,IPv4,新加坡,N/A,139341,ACE,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1792823267.000
+43.174.194.1,443,true,BOG,CO,South America,Bogota,南美洲,哥伦比亚,波哥大,🇨🇴,88 ms,43.152.184.124,IPv4,新加坡,N/A,139341,ACE,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1792823267.000
+43.169.161.157,443,true,MIA,CO,North America,Miami,北美洲,美国,迈阿密,🇺🇸,88 ms,43.152.184.124,IPv4,新加坡,N/A,139341,ACE,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1792823267.000
+43.169.160.157,443,true,MIA,CO,North America,Miami,北美洲,美国,迈阿密,🇺🇸,89 ms,43.152.184.124,IPv4,新加坡,N/A,139341,ACE,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1792823267.000
+43.169.19.179,443,true,BOG,CO,South America,Bogota,南美洲,哥伦比亚,波哥大,🇨🇴,89 ms,43.152.184.124,IPv4,新加坡,N/A,139341,ACE,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1792823267.000
+43.170.20.92,443,true,AMS,NL,Europe,Amsterdam,欧洲,荷兰,阿姆斯特丹,🇳🇱,113 ms,43.174.27.140,IPv4,新加坡,N/A,139341,ACE,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1792823267.000
+43.170.58.62,443,true,FRA,DE,Europe,Frankfurt-am-Main,欧洲,德国,法兰克福,🇩🇪,113 ms,43.152.29.168,IPv4,新加坡,N/A,139341,ACE,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1792823267.000
+43.170.17.114,443,true,AMS,NL,Europe,Amsterdam,欧洲,荷兰,阿姆斯特丹,🇳🇱,116 ms,43.174.27.140,IPv4,新加坡,N/A,139341,ACE,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1792823267.000
+43.170.8.95,443,true,NRT,JP,Asia Pacific,Tokyo,亚洲,日本,东京,🇯🇵,133 ms,43.175.18.185,IPv4,新加坡,N/A,139341,ACE,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1792823267.000
+43.174.193.1,443,true,SCL,CL,South America,Santiago,南美洲,智利,圣地亚哥,🇨🇱,146 ms,43.152.21.212,IPv4,新加坡,N/A,139341,ACE,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1792823267.000
+43.174.195.1,443,true,EZE,AR,South America,Ezeiza,南美洲,阿根廷,埃塞萨,🇦🇷,167 ms,43.175.55.123,IPv4,新加坡,N/A,139341,ACE,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1792823267.000
+43.174.192.1,443,true,GRU,BR,South America,Sao Paulo,南美洲,巴西,圣保罗,🇧🇷,178 ms,43.168.103.85,IPv4,新加坡,N/A,139341,ACE,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1792823267.000
+43.168.16.67,443,true,HKG,HK,Asia Pacific,Hong Kong,亚洲,香港,香港,🇭🇰,180 ms,43.175.120.120,IPv4,新加坡,N/A,139341,ACE,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1792823267.000
+43.170.38.62,443,true,SIN,SG,Asia Pacific,Singapore,亚洲,新加坡,新加坡,🇸🇬,195 ms,43.174.54.85,IPv4,新加坡,N/A,139341,ACE,https,TLSv1.3,plaintext,http/1.1,off,off,off,X25519MLKEM768,1792823267.000
